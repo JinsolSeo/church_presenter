@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "church-presenter"
+version = "0.2.0"
+description = "Reliable dual-output worship presentation software"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [{name = "Jinsol Seo"}]
+dependencies = [
+  "platformdirs>=4.2,<5",
+  "PyMuPDF>=1.24,<2",
+  "PySide6>=6.7,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2",
+  "pytest>=8.2,<9",
+  "pytest-qt>=4.4,<5",
+  "reportlab>=4.2,<5",
+  "ruff>=0.5,<1",
+]
+
+[project.scripts]
+church-presenter = "church_presenter.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/church_presenter"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+qt_api = "pyside6"
+markers = [
+  "media_integration: requires an operating-system multimedia codec backend",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["church_presenter"]
+exclude = ["scripts"]
+
+[[tool.mypy.overrides]]
+module = ["fitz", "fitz.*"]
+ignore_missing_imports = true

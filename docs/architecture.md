@@ -2,10 +2,10 @@
 
 ## Scope
 
-Phase 1 is a native PySide6 desktop application for one operator, one broadcast
-key/PDF output, and one venue PDF output. Video, audio, web streaming, camera
-capture, OBS, ATEM control, and service-order features are deliberately outside
-this phase.
+Phase 2 is a native PySide6 desktop application for one operator, one broadcast
+key/PDF/video output, one venue PDF/video output, and one application-wide
+background-music player. Web streaming, camera capture, OBS, ATEM control,
+device-specific audio routing, and service-order features remain outside scope.
 
 ## Reference analysis
 
@@ -24,6 +24,7 @@ ui -> application commands/state -> domain
 ui -> rendering -> domain
 ui -> services -> domain
 services -> filesystem / Qt screen API / PyMuPDF
+media -> domain contract / Qt Multimedia adapter
 ```
 
 The domain package contains no Qt widgets. `ApplicationState` is the single
@@ -51,6 +52,36 @@ background, padding, alignment, and line spacing with QPainter. PDF pages use a
 shared contain calculation and black letterboxing. No simulation-only image or
 renderer exists.
 
+Decoded video frames are distributed as `QImage` values to the same
+`OutputSurface` instances. Controller Live, physical output, and Simulation do
+not create additional decoders. Each channel has one prepared Preview decoder
+and one Live decoder; TAKE swaps those prepared/live roles so the first frame is
+already available and the prior Live can continue while a new Preview is cued.
+
+`OutputSurface` performs a linear two-stage opacity fade for transitions among
+BLACK, PDF, and VIDEO. Content readiness is validated before state commit. The
+fade only paints existing frames and images; it does not use blur or allocate a
+second video decoder.
+
+## Media playback
+
+`MediaPlaybackBackend` is the replaceable command/signal contract.
+`QtMediaBackend` contains every `QMediaPlayer`, `QAudioOutput`, and `QVideoSink`
+dependency. `MockMediaBackend` gives tests deterministic frames and playback
+events without codecs or audio devices. A future libmpv implementation can
+replace this adapter without changing `ApplicationState` or output widgets.
+
+`VideoPlaybackManager` owns independent Broadcast/Venue prepared and Live
+players plus runtime state. Immutable `Content.video(path)` descriptors are
+copied by TAKE; rapidly changing position remains in runtime state. Preview
+decode is muted and stops on its first real frame. Stop, Ended, or fatal Live
+errors emit a channel event that Controller converts to BLACK.
+
+`AudioPlaybackController` owns the global player and `AudioPlaylist`. Playlist
+order, repeat behavior, three-second Previous policy, deleted-file status, and
+video pause reason are domain/media state rather than widget state. Playlists
+use atomic JSON writes and may store paths relative to the playlist directory.
+
 ## PDF pipeline
 
 PDF discovery is separate from UI models. PyMuPDF renders pages in QRunnable
@@ -59,6 +90,8 @@ pixel size. A bounded LRU image cache avoids repeated work and naturally
 invalidates when a file's modification time changes. Thumbnail requests are
 issued lazily for visible/listed pages and may be cancelled by generation token.
 Errors become user-visible item/channel errors and never terminate the app.
+Thumbnail drag ordering is stored as a per-document permutation of source page
+indices. It changes navigation order without rewriting the source PDF.
 
 ## Screens and simulation
 
@@ -87,8 +120,8 @@ rotating file while the best-effort BLACK/close sequence continues.
 
 ## Extension points
 
-`ContentType.VIDEO`, future folder settings, and channel readiness are defined
-without a Phase 2 playback implementation. Media backends and ATEM commands will
-remain adapters around state changes rather than entering rendering or domain
-models.
-
+libmpv, individual audio routing, transition variants, and ATEM commands remain
+adapter extension points. Two different videos can play simultaneously; this
+uses two decoders. Cueing replacement videos can temporarily use up to four
+channel decoders total. Controller/Simulation/physical mirrors reuse decoded
+frames and do not multiply that count.
