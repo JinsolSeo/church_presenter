@@ -23,13 +23,23 @@ class OutputWindow(QMainWindow):
         self.surface = OutputSurface(coordinator)
         self.setCentralWidget(self.surface)
         self.setWindowTitle(f"{role.value.title()} Output")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
         self.setCursor(Qt.CursorShape.BlankCursor)
 
     def start_on_screen(self, screen: QScreen) -> None:
-        self.windowHandle().setScreen(screen)
+        # Native fullscreen puts the whole application into a dedicated Space
+        # on macOS. A borderless screen-sized window keeps the Controller and
+        # both physical outputs visible at the same time on every platform.
+        self.setScreen(screen)
         self.setGeometry(screen.geometry())
-        self.showFullScreen()
+        self.show()
+        self.raise_()
+        self.surface.update()
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
         self.surface.set_content(content, fade_duration_ms)

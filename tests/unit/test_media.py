@@ -297,6 +297,25 @@ def test_audio_restore_cues_position_without_playing(tmp_path: Path) -> None:
     assert backend.status is PlaybackStatus.READY
 
 
+def test_shared_audio_output_applies_to_all_video_and_music_backends() -> None:
+    manager, video_backends = make_video_manager()
+    music_backend = MockMediaBackend()
+    audio = AudioPlaybackController(music_backend)
+
+    assert manager.set_audio_output_device("external-speaker")
+    assert audio.set_audio_output_device("external-speaker")
+    assert all(
+        backend.audio_output_device_id == "external-speaker"
+        for backend in video_backends
+    )
+    assert music_backend.audio_output_device_id == "external-speaker"
+
+    assert manager.set_audio_output_device("")
+    assert audio.set_audio_output_device("")
+    assert all(not backend.audio_output_device_id for backend in video_backends)
+    assert not music_backend.audio_output_device_id
+
+
 def test_video_play_pauses_music_only_at_play(tmp_path: Path) -> None:
     track = media_file(tmp_path / "music.wav")
     video = media_file(tmp_path / "video.mp4")
@@ -331,6 +350,7 @@ def test_transition_policy_and_backend_contract() -> None:
             "seek",
             "set_volume",
             "set_muted",
+            "set_audio_output_device",
             "close",
         ):
             assert callable(getattr(backend_type, method))

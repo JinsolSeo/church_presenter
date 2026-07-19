@@ -28,6 +28,7 @@ def test_settings_round_trip(tmp_path: Path) -> None:
         music_volume=42,
         video_muted=True,
         music_muted=True,
+        audio_output_device_id="dXNiLXNwZWFrZXI=",
         fade_duration_ms=700,
         last_video_file="/portable/videos/service.mp4",
         last_audio_file="/portable/audio/music.wav",

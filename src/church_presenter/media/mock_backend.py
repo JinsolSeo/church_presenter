@@ -25,6 +25,7 @@ class MockMediaBackend(MediaPlaybackBackend):
         self.position_ms = 0
         self.volume = 1.0
         self.muted = False
+        self.audio_output_device_id = ""
         self._path: Path | None = None
         self._status = PlaybackStatus.UNLOADED
         self.fail_paths: set[Path] = set()
@@ -67,6 +68,10 @@ class MockMediaBackend(MediaPlaybackBackend):
 
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        self.audio_output_device_id = device_id
+        return True
 
     def close(self) -> None:
         self.stop()

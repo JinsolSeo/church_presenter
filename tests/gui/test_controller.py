@@ -53,6 +53,8 @@ def test_preview_selection_waits_for_take(qtbot, tmp_path: Path) -> None:
     assert window.state.broadcast.live_content.kind is ContentType.BLACK
     qtbot.mouseClick(window.take_broadcast, Qt.MouseButton.LeftButton)
     assert window.state.broadcast.live_content == content
+    assert window.broadcast_simulator is not None
+    assert window.broadcast_simulator.surface.target_content == content
 
 
 def test_take_normalizes_string_role_from_qt(qtbot, tmp_path: Path) -> None:

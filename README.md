@@ -25,10 +25,11 @@ python -m pip install -e ".[dev]"
 python -m church_presenter
 ```
 
-개발용 한 모니터에서는 상단 `화면 / Simulation 설정`에서 Simulation Mode를
-선택하고 가상 해상도 및 연결 상태를 정한 뒤 `출력 시작`을 누릅니다. Preview를
+개발용 한 모니터에서는 상단 `화면 / 오디오 설정`에서 Simulation Mode를 선택하고
+가상 해상도, 연결 상태 및 공통 오디오 출력 장치를 정한 뒤 `출력 시작`을 누릅니다. Preview를
 선택해도 출력은 바뀌지 않으며, 해당 TAKE 또는 TAKE BOTH를 눌러야 Live가
-변경됩니다.
+변경됩니다. 출력 창이 닫혀 있다면 TAKE가 지정된 출력 창을 먼저 시작하고, 창을
+시작할 수 없으면 기존 Live를 유지합니다.
 
 ## 품질 확인
 

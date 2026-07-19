@@ -49,6 +49,10 @@ class MediaPlaybackBackend(QObject):
         """Mute or unmute audio output."""
         raise NotImplementedError
 
+    def set_audio_output_device(self, device_id: str) -> bool:
+        """Select a persisted output device, or the system default for an empty ID."""
+        raise NotImplementedError
+
     def close(self) -> None:
         """Release backend resources."""
         raise NotImplementedError

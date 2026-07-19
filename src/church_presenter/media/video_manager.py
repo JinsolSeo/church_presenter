@@ -227,6 +227,15 @@ class VideoPlaybackManager(QObject):
         self.muted = muted
         self._apply_live_audio_policy()
 
+    def set_audio_output_device(self, device_id: str) -> bool:
+        """Apply one shared audio output to every preview and Live player."""
+        results = [
+            backend.set_audio_output_device(device_id)
+            for players in self._channels.values()
+            for backend in (players.preview_backend, players.live_backend)
+        ]
+        return all(results)
+
     def clear_live(self, role: ChannelRole) -> None:
         self._unlink_live_transport(role)
         players = self._channels[role]

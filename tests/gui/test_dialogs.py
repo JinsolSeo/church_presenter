@@ -6,6 +6,7 @@ from PySide6.QtGui import QPalette
 
 from church_presenter.domain.enums import HorizontalAnchor, TextAlignment, VerticalAnchor
 from church_presenter.domain.models import AppSettings, ScreenInfo, SubtitleStyle
+from church_presenter.services.audio_device_service import AudioOutputDeviceInfo
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.settings_service import SettingsService
 from church_presenter.ui.dialogs.screen_settings_dialog import ScreenSettingsDialog
@@ -41,10 +42,17 @@ def test_style_dialog_has_default_presets_and_key_conflict(qtbot, tmp_path: Path
 
 
 def test_screen_settings_exposes_virtual_profile_and_connections(qtbot) -> None:
-    settings = AppSettings(simulation_mode=True, simulation_width=1920, simulation_height=1080)
+    settings = AppSettings(
+        simulation_mode=True,
+        simulation_width=1920,
+        simulation_height=1080,
+        audio_output_device_id="usb-speaker",
+    )
     dialog = ScreenSettingsDialog(
         [ScreenInfo("one", "Single", 0, 0, 1920, 1080, 2.0, True)],
         settings,
+        [AudioOutputDeviceInfo("usb-speaker", "USB Speaker", False)],
+        "MacBook Speakers",
     )
     qtbot.addWidget(dialog)
     assert dialog.simulation_check.isChecked()
@@ -52,6 +60,12 @@ def test_screen_settings_exposes_virtual_profile_and_connections(qtbot) -> None:
     assert dialog.height_spin.value() == 1080
     assert dialog.broadcast_connected.isChecked()
     assert dialog.venue_connected.isChecked()
+    assert dialog.audio_output_combo.currentData() == "usb-speaker"
+    assert "MacBook Speakers" in dialog.audio_output_combo.itemText(0)
+
+    dialog.audio_output_combo.setCurrentIndex(0)
+    dialog._accept()
+    assert settings.audio_output_device_id == ""
 
 
 def test_application_palette_keeps_text_visible(qapp) -> None:

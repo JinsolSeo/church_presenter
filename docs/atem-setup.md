@@ -10,8 +10,12 @@
 기본 Key Color는 `#00FF00`입니다. 자막 글자, 외곽선, 그림자 또는 배경색이 Key
 Color와 너무 가까우면 스타일 설정에서 경고합니다.
 
+PC의 단일 HDMI 출력은 알파 채널을 ATEM 입력으로 전달하지 않습니다. 앱의 출력 창을
+투명하게 만들어도 운영체제가 데스크톱 또는 검은색과 합성한 불투명 영상이 전달됩니다.
+카메라 위에 글자만 합성하려면 Chroma Key, Luma/Linear Key 또는 ATEM Media Player의
+알파 그래픽 중 하나를 사용해야 합니다.
+
 방송에 PDF를 전체화면으로 보낼 때는 ATEM의 Chroma Key를 해제하거나 PC PDF
 입력으로 직접 전환해야 합니다. Church Presenter Phase 1은 ATEM을 자동 제어하지
 않으므로 Key 활성화, 입력 전환 및 카메라 전환은 ATEM 또는 ATEM Software
 Control에서 운영자가 수행합니다.
-

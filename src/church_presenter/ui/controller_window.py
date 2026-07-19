@@ -37,6 +37,7 @@ from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
 from church_presenter.rendering.output_surface import AspectRatioContainer, OutputSurface
+from church_presenter.services.audio_device_service import AudioDeviceService
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import ScreenService, validate_role_assignment
 from church_presenter.services.settings_service import SettingsService
@@ -106,7 +107,13 @@ class ControllerWindow(QMainWindow):
         self.settings = settings
         self.state = ApplicationState()
         self.coordinator = PdfRenderCoordinator()
-        video_factory = video_backend_factory or (lambda: QtMediaBackend(video=True))
+        self.audio_device_service = AudioDeviceService()
+        video_factory = video_backend_factory or (
+            lambda: QtMediaBackend(
+                video=True,
+                audio_device_resolver=self.audio_device_service.resolve,
+            )
+        )
         self.video_manager = VideoPlaybackManager(
             video_factory,
             volume=settings.video_volume / 100,
@@ -124,11 +131,22 @@ class ControllerWindow(QMainWindow):
         if playlist is not None:
             playlist.repeat_mode = settings.repeat_mode
         self.audio_controller = AudioPlaybackController(
-            audio_backend or QtMediaBackend(video=False),
+            audio_backend
+            or QtMediaBackend(
+                video=False,
+                audio_device_resolver=self.audio_device_service.resolve,
+            ),
             playlist,
             volume=settings.music_volume / 100,
             muted=settings.music_muted,
         )
+        self._audio_startup_warning = ""
+        if not self._apply_audio_output_device(settings.audio_output_device_id):
+            settings.audio_output_device_id = ""
+            self._apply_audio_output_device("")
+            self._audio_startup_warning = (
+                "저장된 오디오 출력 장치를 찾을 수 없어 시스템 기본 출력으로 전환했습니다."
+            )
         if playlist is not None:
             self.audio_controller.cue_current(settings.audio_position_ms)
         self.broadcast_output: BroadcastOutputWindow | None = None
@@ -147,6 +165,7 @@ class ControllerWindow(QMainWindow):
                 LOGGER.exception("Could not restore Controller geometry")
         self._build_ui()
         self._connect_signals()
+        self.audio_device_service.outputs_changed.connect(self._audio_outputs_changed)
         self.application.installEventFilter(self)
         self.application.focusChanged.connect(self._focus_changed)
         self._restore_content()
@@ -157,6 +176,8 @@ class ControllerWindow(QMainWindow):
             self.screen_status.setText(
                 f"화면 {len(screen_service.screens())}개 감지 · Simulation Mode 권장"
             )
+        if self._audio_startup_warning:
+            self.status.setText(self._audio_startup_warning)
         if settings_warning:
             self.status.setText(settings_warning)
         if previous_unclean_exit:
@@ -177,7 +198,7 @@ class ControllerWindow(QMainWindow):
         self.screen_status = QLabel("화면 상태 확인 중")
         self.status = QLabel("준비됨 · 모든 Live는 BLACK")
         self.status.setWordWrap(True)
-        settings_button = QPushButton("화면 / Simulation 설정")
+        settings_button = QPushButton("화면 / 오디오 설정")
         self.start_outputs_button = QPushButton("출력 시작")
         self.stop_outputs_button = QPushButton("출력 중지")
         self.start_outputs_button.setStyleSheet("font-weight:800;background:#2563eb;color:white;")
@@ -449,6 +470,9 @@ class ControllerWindow(QMainWindow):
         ):
             self.status.setText("TAKE 실패 · 영상 첫 프레임이 아직 준비되지 않았습니다.")
             return False
+        preview_valid = self.state.channel(role).validate_preview()[0]
+        if preview_valid and not self._ensure_live_outputs((role,)):
+            return False
         succeeded, error = self.state.take(role)
         if not succeeded:
             self.status.setText(f"TAKE 실패 · 기존 Live 유지: {error}")
@@ -490,6 +514,14 @@ class ControllerWindow(QMainWindow):
                     "TAKE BOTH 실패 · 양쪽 기존 Live 유지: 영상 Cue가 준비되지 않았습니다."
                 )
                 return False
+        previews_valid = all(
+            self.state.channel(role).validate_preview()[0]
+            for role in (ChannelRole.BROADCAST, ChannelRole.VENUE)
+        )
+        if previews_valid and not self._ensure_live_outputs(
+            (ChannelRole.BROADCAST, ChannelRole.VENUE)
+        ):
+            return False
         succeeded, error = self.state.take_both()
         if not succeeded:
             self.status.setText(f"TAKE BOTH 실패 · 양쪽 기존 Live 유지: {error}")
@@ -635,7 +667,13 @@ class ControllerWindow(QMainWindow):
                 self.venue_simulator,
             )
         )
-        dialog = ScreenSettingsDialog(self.screen_service.screens(), self.settings, self)
+        dialog = ScreenSettingsDialog(
+            self.screen_service.screens(),
+            self.settings,
+            self.audio_device_service.outputs(),
+            self.audio_device_service.default_description(),
+            self,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.pdf_panel.set_prepare_sizes(self._pdf_prepare_sizes())
             self._move_controller_to_assigned_screen()
@@ -643,7 +681,49 @@ class ControllerWindow(QMainWindow):
                 self.start_outputs()
             else:
                 self.status.setText("화면 설정 저장됨 · 출력 시작 버튼으로 적용하십시오.")
+            if not self._apply_audio_output_device(self.settings.audio_output_device_id):
+                self.settings.audio_output_device_id = ""
+                self._apply_audio_output_device("")
+                self.status.setText(
+                    "선택한 오디오 장치를 사용할 수 없어 시스템 기본 출력으로 전환했습니다."
+                )
+            else:
+                name = self._selected_audio_output_name()
+                self.status.setText(f"오디오 출력 적용됨 · {name}")
             self._update_screen_status()
+
+    def _apply_audio_output_device(self, device_id: str) -> bool:
+        video_applied = self.video_manager.set_audio_output_device(device_id)
+        music_applied = self.audio_controller.set_audio_output_device(device_id)
+        return video_applied and music_applied
+
+    def _selected_audio_output_name(self) -> str:
+        selected = self.settings.audio_output_device_id
+        if not selected:
+            default = self.audio_device_service.default_description()
+            return f"시스템 기본 출력 ({default})" if default else "시스템 기본 출력"
+        return next(
+            (
+                output.description
+                for output in self.audio_device_service.outputs()
+                if output.id == selected
+            ),
+            "선택한 오디오 장치",
+        )
+
+    def _audio_outputs_changed(self) -> None:
+        selected = self.settings.audio_output_device_id
+        if selected and not self.audio_device_service.is_available(selected):
+            self.settings.audio_output_device_id = ""
+            self._apply_audio_output_device("")
+            message = "선택한 오디오 장치가 분리되어 시스템 기본 출력으로 전환했습니다."
+            LOGGER.warning(message)
+            self.status.setText(message)
+            return
+        if not self._apply_audio_output_device(selected):
+            self.settings.audio_output_device_id = ""
+            self._apply_audio_output_device("")
+            self.status.setText("오디오 출력 갱신 실패 · 시스템 기본 출력 사용")
 
     def _pdf_prepare_sizes(self) -> dict[ChannelRole, QSize]:
         if self.settings.simulation_mode:
@@ -678,7 +758,7 @@ class ControllerWindow(QMainWindow):
         y = available.y() + max(0, (available.height() - self.height()) // 2)
         self.move(x, y)
 
-    def start_outputs(self) -> None:
+    def start_outputs(self) -> bool:
         self.stop_outputs()
         if self.settings.simulation_mode:
             profile = (self.settings.simulation_width, self.settings.simulation_height)
@@ -706,7 +786,7 @@ class ControllerWindow(QMainWindow):
                 self._disconnect_role(ChannelRole.VENUE, "가상 Venue 화면 연결 해제")
             self.status.setText("Simulation Outputs 시작됨")
             self._restore_live_video_frames()
-            return
+            return True
 
         valid, error = validate_role_assignment(
             self.settings.broadcast_screen_id,
@@ -715,7 +795,7 @@ class ControllerWindow(QMainWindow):
         )
         if not valid:
             QMessageBox.warning(self, "출력 시작", error)
-            return
+            return False
         broadcast_screen = self.screen_service.qt_screen(self.settings.broadcast_screen_id)
         venue_screen = self.screen_service.qt_screen(self.settings.venue_screen_id)
         if broadcast_screen is None or venue_screen is None:
@@ -724,7 +804,7 @@ class ControllerWindow(QMainWindow):
                 "출력 시작",
                 "저장된 화면을 찾을 수 없습니다. 화면 역할을 다시 지정하십시오.",
             )
-            return
+            return False
         self.broadcast_output = BroadcastOutputWindow(self.coordinator)
         self.venue_output = VenueOutputWindow(self.coordinator)
         self.broadcast_output.set_content(self.state.broadcast.live_content)
@@ -733,6 +813,34 @@ class ControllerWindow(QMainWindow):
         self.venue_output.start_on_screen(venue_screen)
         self._restore_live_video_frames()
         self.status.setText("Physical Outputs 시작됨")
+        return True
+
+    def _ensure_live_outputs(self, roles: tuple[ChannelRole, ...]) -> bool:
+        def is_active(role: ChannelRole) -> bool:
+            window: QWidget | None
+            if self.settings.simulation_mode:
+                window = (
+                    self.broadcast_simulator
+                    if role is ChannelRole.BROADCAST
+                    else self.venue_simulator
+                )
+            else:
+                window = (
+                    self.broadcast_output
+                    if role is ChannelRole.BROADCAST
+                    else self.venue_output
+                )
+            return window is not None and window.isVisible()
+
+        if all(is_active(role) for role in roles):
+            return True
+        if not self.start_outputs() or not all(is_active(role) for role in roles):
+            labels = ", ".join(role.value.title() for role in roles)
+            self.status.setText(
+                f"TAKE 실패 · {labels} 실제 출력 창을 시작할 수 없습니다. 기존 Live 유지"
+            )
+            return False
+        return True
 
     def stop_outputs(self) -> None:
         for window in (

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
+from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QVideoSink
 
 from church_presenter.domain.enums import PlaybackStatus
 from church_presenter.media.base import MediaPlaybackBackend
@@ -13,8 +14,14 @@ from church_presenter.media.base import MediaPlaybackBackend
 class QtMediaBackend(MediaPlaybackBackend):
     """Qt Multimedia adapter used for local video and background audio."""
 
-    def __init__(self, *, video: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        video: bool = False,
+        audio_device_resolver: Callable[[str], QAudioDevice | None] | None = None,
+    ) -> None:
         super().__init__()
+        self._audio_device_resolver = audio_device_resolver
         self._path: Path | None = None
         self._status = PlaybackStatus.UNLOADED
         self._load_generation = 0
@@ -87,6 +94,18 @@ class QtMediaBackend(MediaPlaybackBackend):
 
     def set_muted(self, muted: bool) -> None:
         self.audio_output.setMuted(muted)
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        if not device_id:
+            self.audio_output.setDevice(QAudioDevice())
+            return True
+        if self._audio_device_resolver is None:
+            return False
+        device = self._audio_device_resolver(device_id)
+        if device is None or device.isNull():
+            return False
+        self.audio_output.setDevice(device)
+        return True
 
     def close(self) -> None:
         self._load_generation += 1

@@ -70,6 +70,9 @@ second video decoder.
 dependency. `MockMediaBackend` gives tests deterministic frames and playback
 events without codecs or audio devices. A future libmpv implementation can
 replace this adapter without changing `ApplicationState` or output widgets.
+`AudioDeviceService` enumerates Qt audio outputs, persists an encoded device ID,
+and resolves it for every video and background-music backend. An empty ID keeps
+all audio on the operating system's current default output.
 
 `VideoPlaybackManager` owns independent Broadcast/Venue prepared and Live
 players plus runtime state. Immutable `Content.video(path)` descriptors are

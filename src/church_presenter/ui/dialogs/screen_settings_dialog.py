@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from church_presenter.domain.models import AppSettings, ScreenInfo
+from church_presenter.services.audio_device_service import AudioOutputDeviceInfo
 from church_presenter.services.screen_service import validate_role_assignment
 
 
@@ -25,10 +28,12 @@ class ScreenSettingsDialog(QDialog):
         self,
         screens: list[ScreenInfo],
         settings: AppSettings,
+        audio_outputs: Sequence[AudioOutputDeviceInfo] = (),
+        default_audio_output_name: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Screen & Simulation Settings")
+        self.setWindowTitle("Screen, Simulation & Audio Settings")
         self.settings = settings
         layout = QVBoxLayout(self)
         if len(screens) < 3:
@@ -52,6 +57,17 @@ class ScreenSettingsDialog(QDialog):
         form.addRow("Controller Screen", self.controller_combo)
         form.addRow("Broadcast Screen", self.broadcast_combo)
         form.addRow("Venue Screen", self.venue_combo)
+
+        self.audio_output_combo = QComboBox()
+        default_label = "시스템 기본 출력"
+        if default_audio_output_name:
+            default_label += f" · 현재 {default_audio_output_name}"
+        self.audio_output_combo.addItem(default_label, "")
+        for output in audio_outputs:
+            suffix = " · 시스템 기본" if output.is_default else ""
+            self.audio_output_combo.addItem(output.description + suffix, output.id)
+        self._select(self.audio_output_combo, settings.audio_output_device_id)
+        form.addRow("Audio Output", self.audio_output_combo)
 
         self.simulation_check = QCheckBox("Simulation Mode")
         self.simulation_check.setChecked(settings.simulation_mode)
@@ -124,4 +140,5 @@ class ScreenSettingsDialog(QDialog):
         self.settings.simulation_dpr = self.dpr_spin.value()
         self.settings.simulation_broadcast_connected = self.broadcast_connected.isChecked()
         self.settings.simulation_venue_connected = self.venue_connected.isChecked()
+        self.settings.audio_output_device_id = str(self.audio_output_combo.currentData())
         self.accept()

@@ -168,6 +168,10 @@ class AudioPlaybackController(QObject):
         self.backend.set_muted(muted)
         self.runtime_changed.emit(self.runtime)
 
+    def set_audio_output_device(self, device_id: str) -> bool:
+        """Apply the shared application audio output to background music."""
+        return self.backend.set_audio_output_device(device_id)
+
     def set_repeat_mode(self, mode: RepeatMode) -> None:
         self.playlist.repeat_mode = mode
         self.playlist.is_modified = True

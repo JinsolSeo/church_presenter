@@ -367,6 +367,7 @@ class AppSettings:
     music_volume: int = 70
     video_muted: bool = False
     music_muted: bool = False
+    audio_output_device_id: str = ""
     last_video_file: str = ""
     last_audio_file: str = ""
     last_playlist: str = ""

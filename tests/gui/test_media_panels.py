@@ -197,6 +197,26 @@ def test_video_play_marks_music_auto_pause_without_resume(qtbot, tmp_path: Path)
     window.audio_controller.playlist.is_modified = False
 
 
+def test_audio_device_disconnect_falls_back_to_system_default(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window, video_backends = make_media_controller(qtbot, tmp_path)
+    music_backend = window.audio_controller.backend
+    assert isinstance(music_backend, MockMediaBackend)
+    window.settings.audio_output_device_id = "external-speaker"
+    assert window._apply_audio_output_device("external-speaker")
+
+    monkeypatch.setattr(window.audio_device_service, "is_available", lambda _device_id: False)
+    window._audio_outputs_changed()
+
+    assert window.settings.audio_output_device_id == ""
+    assert all(not backend.audio_output_device_id for backend in video_backends)
+    assert not music_backend.audio_output_device_id
+    assert "시스템 기본 출력" in window.status.text()
+
+
 def test_audio_playlist_add_reorder_repeat_and_save_restore(qtbot, tmp_path: Path) -> None:
     tracks = [tmp_path / f"track-{index}.wav" for index in range(3)]
     for track in tracks:
