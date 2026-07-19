@@ -11,6 +11,18 @@
 
 프로젝트 가칭은 `Church Presenter`, Python 패키지명은 `church_presenter`로 한다.
 
+### 현재 구현 기준
+
+* Phase 1과 Phase 2 범위는 구현되어 있다.
+* Controller UI는 FHD(1920×1080)를 기준으로 하며, 작은 노트북 화면에서는 컴팩트
+  밀도를 자동 적용하고 상·하단 영역을 `QSplitter`로 조절한다.
+* Light Professional, Dark Modern, Minimalist Light 테마와 JSON 기반 테마 확장 구조를
+  사용한다.
+* 예배 순서 Preview 프리셋과 JSON 저장·불러오기는 Phase 4보다 먼저 구현되었다.
+* 사용자 화면의 채널명은 `송출`과 `현장`으로 표시한다. 코드의 도메인 타입과 저장
+  호환성을 위한 Broadcast/Venue 명칭은 유지한다.
+* 다음 주요 단계는 Windows 실기기 검증, 패키징, 장치 분리 복구와 성능 최적화다.
+
 ---
 
 ## 1. 실제 운영 환경
@@ -68,13 +80,13 @@ FULLSCREEN_PDF
 
 FULLSCREEN_VIDEO
 - 방송 화면 전체에 영상 표시
-- Phase 2에서 구현
+- Phase 2 구현 완료
 
 BLACK
 - 검은 화면 출력
 ```
 
-앱은 Phase 1에서 ATEM을 직접 제어하지 않는다.
+앱은 현재 ATEM을 직접 제어하지 않는다.
 
 ATEM에서 Chroma Key 활성화, 입력 전환, 카메라 전환은 운영자가 ATEM 또는 ATEM Software Control에서 수행한다.
 
@@ -173,13 +185,13 @@ Venue Output Simulator
 
 ## 6. 콘텐츠 종류
 
-### Phase 1
+### 구현 완료: Phase 1
 
 * TXT 자막
 * PDF
 * 검은 화면
 
-### Phase 2
+### 구현 완료: Phase 2
 
 * 로컬 영상
 * 로컬 배경음악
@@ -188,7 +200,7 @@ Venue Output Simulator
 
 ### 제외 대상
 
-초기 개발에서는 다음을 구현하지 않는다.
+현재 범위에서는 다음을 구현하지 않는다.
 
 * YouTube 영상
 * YouTube 음악
@@ -196,10 +208,10 @@ Venue Output Simulator
 * 카메라 직접 캡처
 * OBS 연동
 * ATEM 직접 제어
-* 예배 순서표
 * 긴급 버튼 모음
 
-나중에 기능을 추가할 수 있도록 확장 지점만 마련한다.
+예배 순서 Preview 프리셋은 현재 구현되어 있다. 나머지 제외 기능은 나중에 추가할 수
+있도록 확장 지점만 마련한다.
 
 ---
 
@@ -339,13 +351,11 @@ Key Color와 자막·외곽선·그림자·배경색이 지나치게 유사할 �
 
 지원 기능:
 
-* 파일명순 정렬
-* 수정 날짜순 정렬
-* 오름차순·내림차순
+* PDF 파일 목록을 파일명 내림차순으로 고정 정렬
 * PDF 파일 드래그 앤 드롭
 * 파일 목록 새로고침
 * 선택한 PDF의 페이지 썸네일 표시
-* 썸네일 스크롤
+* 원본 페이지 번호 오름차순 썸네일과 내부 스크롤
 * 썸네일 클릭으로 Preview 페이지 선택
 * Left/Right로 Preview 페이지 이동
 * Home/End로 처음/마지막 페이지 이동
@@ -381,7 +391,7 @@ video_folder
 audio_folder
 ```
 
-Phase 1에서는 subtitle과 PDF 폴더만 구현하되, 설정 모델에는 향후 확장 가능한 필드를 둔다.
+subtitle, PDF, video, audio 폴더를 모두 구현하며 각 경로를 설정에 저장한다.
 
 파일 목록 모델은 UI와 분리한다.
 
@@ -652,8 +662,11 @@ church-presenter/
 * 마지막 자막 스타일 프리셋
 * Key Color
 * 마지막 PDF 파일
+* PDF Preview 대상과 동시 진행 상태
+* 현재 테마
+* 예배 순서 JSON 파일과 Preview 프리셋
 * Controller 창 크기와 위치
-* 패널 배치
+* 패널 배치와 상·하단 splitter 비율
 * 영상 볼륨
 * 음악 볼륨
 * 마지막 재생목록
@@ -840,18 +853,21 @@ Qt Signal은 이벤트 전달에 사용하되, 상태 모델을 무분별한 Sig
 다음 순서로 진행한다.
 
 ```text
-Phase 1
+Phase 1 (완료)
 출력 프레임워크, Simulation Mode, 자막, PDF, Preview/Live, 설정
 
-Phase 2
+Phase 2 (완료)
 로컬 영상, 배경음악, 재생목록, Fade, 오디오 충돌 정책
 
-Phase 3
+Phase 3 (다음 단계)
 Windows 운영 검증, 패키징, 장치 분리 복구, 성능 최적화
 
 Phase 4
-예배 순서표, 긴급 버튼, ATEM 제어 연동, 확장 기능
+긴급 버튼, ATEM 제어 연동, 확장 기능
 ```
+
+예배 순서 Preview 프리셋은 사용자 요청으로 선행 구현되었으므로 Phase 4의 남은 범위에
+포함하지 않는다.
 
 각 Phase를 시작할 때:
 
@@ -910,4 +926,3 @@ Phase 4
 테스트를 실행하지 못했다면 실행했다고 주장하지 말고 그 이유와 사용자가 실행할 정확한 명령을 적는다.
 
 현재 작업의 성공 기준을 모두 충족하기 전에는 작업을 완료했다고 표현하지 않는다.
-
