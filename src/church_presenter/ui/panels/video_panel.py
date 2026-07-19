@@ -8,12 +8,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QVBoxLayout,
@@ -82,7 +84,12 @@ class VideoPanel(QWidget):
         toolbar = QHBoxLayout()
         folder_button = QPushButton("영상 폴더")
         self.folder_label = QLabel(str(self.folder or "선택되지 않음"))
-        self.folder_label.setWordWrap(True)
+        self.folder_label.setMinimumWidth(0)
+        self.folder_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.folder_label.setToolTip(str(self.folder or ""))
         self.sort_combo = QComboBox()
         self.sort_combo.addItem("파일명", SortField.NAME.value)
         self.sort_combo.addItem("수정 날짜", SortField.MODIFIED.value)
@@ -98,16 +105,35 @@ class VideoPanel(QWidget):
             refresh_button,
         ):
             toolbar.addWidget(widget)
+        toolbar.setStretch(1, 1)
         layout.addLayout(toolbar)
 
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(10)
+        library_layout = QVBoxLayout()
+        library_layout.setContentsMargins(0, 0, 0, 0)
+        library_layout.setSpacing(6)
         self.file_list = QListWidget()
         self.file_list.setIconSize(QPixmap(160, 90).size())
         self.info_label = QLabel("영상 파일을 선택하면 실제 첫 프레임을 Preview로 준비합니다.")
-        self.info_label.setWordWrap(True)
-        layout.addWidget(self.file_list, 1)
-        layout.addWidget(self.info_label)
+        library_layout.addWidget(self.file_list, 1)
+        library_layout.addWidget(self.info_label)
+        content_layout.addLayout(library_layout, 1)
 
-        actions = QHBoxLayout()
+        self.control_panel = QFrame()
+        self.control_panel.setObjectName("VideoControlPanel")
+        self.control_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        self.control_panel.setMinimumWidth(240)
+        self.control_panel.setMaximumWidth(640)
+        self.control_panel.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
+        controls = QGridLayout(self.control_panel)
+        controls.setContentsMargins(8, 8, 8, 8)
+        controls.setHorizontalSpacing(6)
+        controls.setVerticalSpacing(6)
+
         self.target_combo = QComboBox()
         self.target_combo.addItem("Broadcast", ChannelRole.BROADCAST.value)
         self.target_combo.addItem("Venue", ChannelRole.VENUE.value)
@@ -118,17 +144,6 @@ class VideoPanel(QWidget):
         self.take_both_button.setObjectName("DangerButton")
         self.take_button.setEnabled(False)
         self.take_both_button.setEnabled(False)
-        for widget in (
-            self.target_combo,
-            cue_button,
-            both_button,
-            self.take_button,
-            self.take_both_button,
-        ):
-            actions.addWidget(widget)
-        layout.addLayout(actions)
-
-        controls = QGridLayout()
         self.play_button = QPushButton("Play")
         self.pause_button = QPushButton("Pause")
         self.stop_button = QPushButton("Stop → BLACK")
@@ -146,18 +161,29 @@ class VideoPanel(QWidget):
         self.fade_spin.setSuffix(" ms Fade")
         self.fade_spin.setValue(fade_duration_ms)
         self.status_label = QLabel("UNLOADED")
-        controls.addWidget(self.play_button, 0, 0)
-        controls.addWidget(self.pause_button, 0, 1)
-        controls.addWidget(self.stop_button, 0, 2)
-        controls.addWidget(self.restart_button, 0, 3)
-        controls.addWidget(self.seek_slider, 1, 0, 1, 3)
-        controls.addWidget(self.time_label, 1, 3)
-        controls.addWidget(QLabel("영상 볼륨"), 2, 0)
-        controls.addWidget(self.volume_slider, 2, 1, 1, 2)
-        controls.addWidget(self.mute_check, 2, 3)
-        controls.addWidget(self.fade_spin, 3, 0)
-        controls.addWidget(self.status_label, 3, 1, 1, 3)
-        layout.addLayout(controls)
+        self.status_label.setMinimumWidth(0)
+        controls.addWidget(QLabel("제어 채널"), 0, 0)
+        controls.addWidget(self.target_combo, 0, 1, 1, 3)
+        controls.addWidget(cue_button, 1, 0, 1, 2)
+        controls.addWidget(both_button, 1, 2, 1, 2)
+        controls.addWidget(self.take_button, 2, 0, 1, 2)
+        controls.addWidget(self.take_both_button, 2, 2, 1, 2)
+        controls.addWidget(self.play_button, 3, 0)
+        controls.addWidget(self.pause_button, 3, 1)
+        controls.addWidget(self.stop_button, 3, 2)
+        controls.addWidget(self.restart_button, 3, 3)
+        controls.addWidget(self.seek_slider, 4, 0, 1, 3)
+        controls.addWidget(self.time_label, 4, 3)
+        controls.addWidget(QLabel("영상 볼륨"), 5, 0)
+        controls.addWidget(self.volume_slider, 5, 1, 1, 2)
+        controls.addWidget(self.mute_check, 5, 3)
+        controls.addWidget(self.fade_spin, 6, 0)
+        controls.addWidget(self.status_label, 6, 1, 1, 3)
+        for column in range(4):
+            controls.setColumnStretch(column, 1)
+        controls.setRowStretch(7, 1)
+        content_layout.addWidget(self.control_panel)
+        layout.addLayout(content_layout, 1)
 
         folder_button.clicked.connect(self.choose_folder)
         refresh_button.clicked.connect(self.refresh)
@@ -190,6 +216,7 @@ class VideoPanel(QWidget):
             return
         self.folder = Path(selected)
         self.folder_label.setText(selected)
+        self.folder_label.setToolTip(selected)
         self.folder_changed.emit(selected)
         self.refresh()
 

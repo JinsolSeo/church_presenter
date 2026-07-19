@@ -35,6 +35,10 @@ def apply_application_style(application: QApplication) -> None:
         QFrame#SyncControl[keyboardActive="true"] {
             background-color: #bae6fd; border: 3px solid #075985;
         }
+        QFrame#PreviewPresetRow {
+            background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;
+        }
+        QDockWidget#PreviewPresetDock { color: #172033; font-weight: 800; }
         QCheckBox#SyncContentCheck {
             color: #0f172a; background-color: #ffffff; border: 2px solid #475569;
             border-radius: 5px; padding: 6px 10px; font-weight: 800;
@@ -60,6 +64,10 @@ def apply_application_style(application: QApplication) -> None:
         QPushButton#DangerButton {
             color: #ffffff; background-color: #dc2626; border-color: #b91c1c;
             font-weight: 800; padding: 8px 14px;
+        }
+        QPushButton#UpdatePreviewPreset {
+            color: #1d4ed8; background-color: #dbeafe; border-color: #60a5fa;
+            font-weight: 800;
         }
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
             color: #172033; background-color: #ffffff; selection-color: #ffffff;

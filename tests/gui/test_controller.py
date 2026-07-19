@@ -4,14 +4,21 @@ from pathlib import Path
 
 import fitz
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from church_presenter.domain.enums import ChannelRole, ContentType
-from church_presenter.domain.models import AppSettings, Content, ScreenInfo, SubtitleStyle
+from church_presenter.domain.models import (
+    AppSettings,
+    Content,
+    PreviewPreset,
+    ScreenInfo,
+    SubtitleStyle,
+)
 from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.screen_service import MockScreenService
 from church_presenter.services.settings_service import SettingsService
 from church_presenter.ui.controller_window import ControllerWindow
+from church_presenter.ui.styles import apply_application_style
 
 
 def make_controller(qtbot, tmp_path: Path) -> ControllerWindow:
@@ -51,10 +58,316 @@ def test_preview_selection_waits_for_take(qtbot, tmp_path: Path) -> None:
     window.set_preview(ChannelRole.BROADCAST, content)
     assert window.state.broadcast.preview_content == content
     assert window.state.broadcast.live_content.kind is ContentType.BLACK
-    qtbot.mouseClick(window.take_broadcast, Qt.MouseButton.LeftButton)
+    window.subtitle_panel.take_requested.emit()
     assert window.state.broadcast.live_content == content
     assert window.broadcast_simulator is not None
     assert window.broadcast_simulator.surface.target_content == content
+
+
+def test_named_preview_preset_applies_without_changing_live(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.subtitle_panel.document.lines = ["찬양"]
+    window.subtitle_panel.document.group_size = 1
+    broadcast = Content.subtitle("찬양", 0, SubtitleStyle(), "#00FF00")
+    venue = Content.black()
+    window.set_preview(ChannelRole.BROADCAST, broadcast)
+    window.set_preview(ChannelRole.VENUE, venue)
+    window.preview_preset_panel.name_edit.setText("1. 찬양")
+
+    qtbot.mouseClick(
+        window.preview_preset_panel.save_button,
+        Qt.MouseButton.LeftButton,
+    )
+    assert [preset.name for preset in window.preview_presets] == ["1. 찬양"]
+    assert window.preview_presets[0].broadcast_content.text == ""
+    assert window.settings_service.preview_presets_path.is_file()
+
+    window.set_preview(ChannelRole.BROADCAST, Content.black())
+    qtbot.mouseClick(
+        window.preview_preset_panel.preset_buttons["1. 찬양"],
+        Qt.MouseButton.LeftButton,
+    )
+    assert window.state.broadcast.preview_content == broadcast
+    assert window.state.venue.preview_content == venue
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+    assert window.state.venue.live_content.kind is ContentType.BLACK
+    assert window.sync_bar.property("keyboardActive") is True
+    assert not hasattr(window.preview_preset_panel, "take_both_button")
+
+    qtbot.mouseClick(
+        window.sync_take_button,
+        Qt.MouseButton.LeftButton,
+    )
+    assert window.state.broadcast.live_content == broadcast
+    assert window.state.venue.live_content == venue
+
+
+def test_preview_preset_can_be_renamed_and_reordered(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.save_preview_preset("첫 순서")
+    window.save_preview_preset("둘째 순서")
+
+    assert window.move_preview_preset("둘째 순서", -1)
+    assert window.rename_preview_preset("둘째 순서", "예배 시작")
+    assert [preset.name for preset in window.preview_presets] == ["예배 시작", "첫 순서"]
+
+    loaded, warning = window.settings_service.load_preview_presets()
+    assert warning == ""
+    assert [preset.name for preset in loaded] == ["예배 시작", "첫 순서"]
+
+
+def test_row_save_is_temporary_until_saved_as(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "이번주.pdf"
+    create_pdf(path, page_count=4)
+    window = make_controller(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 4, timeout=5000)
+    initial = [
+        PreviewPreset(
+            "예배 시작",
+            Content(kind=ContentType.PDF_PAGE, pdf_page=0),
+            Content.black(),
+        ),
+        PreviewPreset("찬양", Content.black(), Content.black()),
+    ]
+    window.preview_presets = initial
+    window.preview_preset_panel.set_presets(initial)
+    order_path = tmp_path / "수정할_예배_순서.json"
+    assert window.save_preview_preset_file(order_path)
+
+    qtbot.mouseClick(
+        window.preview_preset_panel.preset_buttons["예배 시작"],
+        Qt.MouseButton.LeftButton,
+    )
+    qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=10000)
+    window.pdf_panel.navigate_for_roles(2, (ChannelRole.BROADCAST,))
+    qtbot.waitUntil(
+        lambda: window.state.broadcast.is_ready
+        and window.state.broadcast.preview_content.pdf_page == 2,
+        timeout=10000,
+    )
+    live_before = (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    )
+
+    qtbot.mouseClick(
+        window.preview_preset_panel.update_buttons["예배 시작"],
+        Qt.MouseButton.LeftButton,
+    )
+
+    assert [preset.name for preset in window.preview_presets] == ["예배 시작", "찬양"]
+    assert window.preview_presets[0].broadcast_content.pdf_page == 2
+    assert window.preview_presets[0].venue_content.kind is ContentType.BLACK
+    assert window.preview_preset_panel.preset_buttons["예배 시작"].isChecked()
+    assert (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    ) == live_before
+    original = window.settings_service.load_preview_preset_file(order_path)
+    assert original[0].broadcast_content.pdf_page == 0
+
+    revised_path = tmp_path / "수정된_예배_순서.json"
+    assert window.save_preview_preset_file(revised_path)
+    revised = window.settings_service.load_preview_preset_file(revised_path)
+    assert revised == window.preview_presets
+
+
+def test_pdf_preview_preset_waits_for_high_resolution_prepare(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "preset.pdf"
+    create_pdf(path, page_count=2)
+    window = make_controller(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 2, timeout=5000)
+    preset = PreviewPreset(
+        "말씀",
+        Content(kind=ContentType.PDF_PAGE, pdf_page=1),
+        Content.black(),
+    )
+    window.preview_presets = [preset]
+    window.preview_preset_panel.set_presets([preset])
+
+    assert window.apply_preview_preset("말씀")
+    assert not window.state.broadcast.is_ready
+    assert not window.sync_take_button.isEnabled()
+    assert window.sync_bar.property("keyboardActive") is True
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+    qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=10000)
+
+    assert window.sync_take_button.isEnabled()
+    assert window.state.broadcast.preview_content == Content.pdf(path, 1)
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+
+
+def test_unavailable_preview_preset_preserves_existing_previews(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    before_broadcast = Content.subtitle("유지", 0, SubtitleStyle(), "#00FF00")
+    before_venue = Content.black()
+    window.set_preview(ChannelRole.BROADCAST, before_broadcast)
+    window.set_preview(ChannelRole.VENUE, before_venue)
+    preset = PreviewPreset(
+        "삭제된 파일",
+        Content.pdf(tmp_path / "missing.pdf", 0),
+        Content.black(),
+    )
+    window.preview_presets = [preset]
+
+    assert not window.apply_preview_preset("삭제된 파일")
+    assert window.state.broadcast.preview_content == before_broadcast
+    assert window.state.venue.preview_content == before_venue
+    assert "기존 Preview 유지" in window.status.text()
+
+
+def test_worship_order_changes_stay_temporary_until_saved_as(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.save_preview_preset("예배 시작")
+    order_path = tmp_path / "주일_예배_순서.json"
+
+    assert window.save_preview_preset_file(order_path)
+    assert window.preview_preset_file == order_path.resolve()
+    assert window.preview_preset_panel.file_label.text() == (
+        f"기준 파일 · {order_path.name} · JSON 저장은 다른 이름"
+    )
+    assert window.preview_preset_panel.file_label.toolTip() == str(order_path.resolve())
+    assert window.settings.preview_preset_file == str(order_path.resolve())
+
+    window.save_preview_preset("찬양")
+    saved = window.settings_service.load_preview_preset_file(order_path)
+    assert [preset.name for preset in saved] == ["예배 시작"]
+
+    revised_path = tmp_path / "주일_예배_순서_수정본.json"
+    assert window.save_preview_preset_file(revised_path)
+    revised = window.settings_service.load_preview_preset_file(revised_path)
+    assert [preset.name for preset in revised] == ["예배 시작", "찬양"]
+
+    replacement_path = tmp_path / "저녁_예배_순서.json"
+    replacement = [PreviewPreset("저녁 예배", Content.black(), Content.black())]
+    window.settings_service.save_preview_preset_file(replacement_path, replacement)
+    assert window.load_preview_preset_file(replacement_path)
+    assert window.preview_presets == replacement
+    assert window.settings_service.load_preview_presets()[0] == replacement
+
+
+def test_loaded_order_resets_list_and_uses_current_documents(qtbot, tmp_path: Path) -> None:
+    current_pdf = tmp_path / "이번주.pdf"
+    create_pdf(current_pdf, page_count=4)
+    window = make_controller(qtbot, tmp_path)
+    window.save_preview_preset("기존 항목")
+    window.subtitle_panel.document.lines = ["이번 주 첫 자막", "이번 주 둘째 자막"]
+    window.subtitle_panel.document.group_size = 1
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 4, timeout=5000)
+    order_path = tmp_path / "위치_기준_예배_순서.json"
+    order = [
+        PreviewPreset(
+            "말씀 시작",
+            Content(kind=ContentType.SUBTITLE_KEY, subtitle_card_index=1),
+            Content(kind=ContentType.PDF_PAGE, pdf_page=2),
+        )
+    ]
+    window.settings_service.save_preview_preset_file(order_path, order)
+
+    assert window.load_preview_preset_file(order_path)
+    assert window.preview_presets == order
+    assert "기존 항목" not in window.preview_preset_panel.preset_buttons
+    assert set(window.preview_preset_panel.preset_buttons) == {"말씀 시작"}
+    assert window.apply_preview_preset("말씀 시작")
+
+    assert window.state.broadcast.preview_content.text == "이번 주 둘째 자막"
+    assert window.state.broadcast.preview_content.subtitle_card_index == 1
+    assert window.state.venue.preview_content.pdf_path == current_pdf
+    assert window.state.venue.preview_content.pdf_page == 2
+    assert window.subtitle_panel.preview_index == 1
+    assert window.pdf_panel.preview_page == 2
+
+
+def test_worship_order_file_buttons_use_selected_json(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    assert not hasattr(window.preview_preset_panel, "save_file_button")
+    window.save_preview_preset("저장할 순서")
+    saved_path = tmp_path / "버튼_저장.json"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(saved_path), "JSON"),
+    )
+
+    qtbot.mouseClick(
+        window.preview_preset_panel.save_file_as_button,
+        Qt.MouseButton.LeftButton,
+    )
+    assert saved_path.is_file()
+
+    replacement_path = tmp_path / "버튼_불러오기.json"
+    replacement = [PreviewPreset("불러온 순서", Content.black(), Content.black())]
+    window.settings_service.save_preview_preset_file(replacement_path, replacement)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(replacement_path), "JSON"),
+    )
+
+    qtbot.mouseClick(
+        window.preview_preset_panel.open_file_button,
+        Qt.MouseButton.LeftButton,
+    )
+    assert window.preview_presets == replacement
+    assert set(window.preview_preset_panel.preset_buttons) == {"불러온 순서"}
+
+
+def test_compact_controller_layout_uses_tab_take_controls(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+
+    assert not hasattr(window, "take_broadcast")
+    assert not hasattr(window, "take_venue")
+    assert window.status.parentWidget() is window.statusBar()
+    assert window.root_scroll.widget().layout().indexOf(window.status) == -1
+
+
+def test_compact_controller_fits_without_vertical_scroll(qtbot, tmp_path: Path) -> None:
+    application = QApplication.instance()
+    assert isinstance(application, QApplication)
+    apply_application_style(application)
+    window = make_controller(qtbot, tmp_path)
+    window.resize(900, 760)
+    qtbot.wait(20)
+
+    assert window.root_scroll.horizontalScrollBar().maximum() == 0
+    assert window.root_scroll.verticalScrollBar().maximum() == 0
+    assert window.subtitle_panel.file_label.width() > 0
+
+
+def test_controller_gives_more_extra_height_to_monitors(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    root_layout = window.root_scroll.widget().layout()
+
+    assert root_layout.stretch(1) == 3
+    assert root_layout.stretch(3) == 2
+
+
+def test_controller_geometry_is_clamped_to_available_screen(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    screen = window.screen()
+    assert screen is not None
+    available = screen.availableGeometry()
+
+    window.hide()
+    window.resize(available.width() + 200, available.height() + 200)
+    window.show()
+    qtbot.wait(20)
+
+    assert window.width() <= available.width()
+    assert window.height() <= available.height()
 
 
 def test_take_normalizes_string_role_from_qt(qtbot, tmp_path: Path) -> None:

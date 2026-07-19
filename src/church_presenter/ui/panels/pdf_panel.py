@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -139,6 +140,12 @@ class PdfPanel(QWidget):
         layout = QVBoxLayout(self)
         toolbar = QHBoxLayout()
         self.folder_label = QLabel(str(self.folder))
+        self.folder_label.setMinimumWidth(0)
+        self.folder_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.folder_label.setToolTip(str(self.folder))
         folder_button = QPushButton("PDF 폴더")
         refresh_button = QPushButton("새로고침")
         self.sort_combo = QComboBox()
@@ -164,13 +171,15 @@ class PdfPanel(QWidget):
         )
         for widget in toolbar_widgets:
             toolbar.addWidget(widget)
+        toolbar.setStretch(0, 1)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        splitter.addWidget(self.file_list)
+        self.file_list.setMinimumWidth(300)
+        self.splitter.addWidget(self.file_list)
         right = QWidget()
         right_layout = QVBoxLayout(right)
         self.status = QLabel("PDF를 선택하십시오.")
@@ -210,16 +219,27 @@ class PdfPanel(QWidget):
             go_button,
             self.preview_label,
             self.live_label,
+        )
+        for widget in page_widgets:
+            page_row.addWidget(widget)
+        page_row.addStretch()
+        right_layout.addLayout(page_row)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_widgets: tuple[QWidget, ...] = (
             send_both,
             self.take_button,
             self.take_both_button,
         )
-        for widget in page_widgets:
-            page_row.addWidget(widget)
-        right_layout.addLayout(page_row)
-        splitter.addWidget(right)
-        splitter.setSizes([340, 760])
-        layout.addWidget(splitter)
+        for widget in action_widgets:
+            action_row.addWidget(widget)
+        right_layout.addLayout(action_row)
+        self.splitter.addWidget(right)
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([320, 780])
+        layout.addWidget(self.splitter)
 
         folder_button.clicked.connect(self.choose_folder)
         refresh_button.clicked.connect(self.refresh)
@@ -268,6 +288,7 @@ class PdfPanel(QWidget):
             self.folder = Path(selected)
             self.extra_paths.clear()
             self.folder_label.setText(selected)
+            self.folder_label.setToolTip(selected)
             self.folder_changed.emit(selected)
             self.refresh()
 
@@ -412,6 +433,19 @@ class PdfPanel(QWidget):
             priority=3,
         )
         self.selection_changed.emit(str(self.current_path), self.preview_page)
+
+    def set_preview_position(self, page: int) -> None:
+        """Synchronize page controls without starting another render request."""
+        if not 0 <= page < self.page_count or page not in self.page_order:
+            return
+        self.preview_page = page
+        self.preview_position = self.page_order.index(page)
+        self.page_spin.setValue(page + 1)
+        self.thumbnail_list.blockSignals(True)
+        self.thumbnail_list.setCurrentRow(self.preview_position)
+        self.thumbnail_list.blockSignals(False)
+        self.preview_label.setText(self._preview_position_text("Preset Preview"))
+        self._request_thumbnail(page, priority=2)
 
     def move_preview(self, offset: int) -> None:
         if not self.page_order:
@@ -561,8 +595,8 @@ class PdfPanel(QWidget):
                 return item
         return None
 
-    def mark_live(self, role: ChannelRole) -> None:
-        self.live_pages[role] = self.preview_page
+    def mark_live(self, role: ChannelRole, page: int | None = None) -> None:
+        self.live_pages[role] = self.preview_page if page is None else page
         self.live_label.setText(
             f"Live B: {self._page_text(ChannelRole.BROADCAST)} · "
             f"V: {self._page_text(ChannelRole.VENUE)}"

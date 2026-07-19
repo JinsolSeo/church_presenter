@@ -61,15 +61,37 @@ def test_video_take_waits_until_a_real_first_frame(qtbot, tmp_path: Path) -> Non
     assert not window.state.broadcast.is_ready
     assert not panel.take_button.isEnabled()
     assert not panel.take_both_button.isEnabled()
-    assert not window.take_broadcast.isEnabled()
 
     backends[0].emit_video_frame()
     qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=1000)
     assert panel.take_button.isEnabled()
     assert not panel.take_both_button.isEnabled()
-    assert window.take_broadcast.isEnabled()
     qtbot.mouseClick(panel.take_button, Qt.MouseButton.LeftButton)
     assert window.state.broadcast.live_content.kind is ContentType.VIDEO
+
+
+def test_video_controls_are_compact_and_beside_library(qtbot, tmp_path: Path) -> None:
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    window.preview_preset_dock.hide()
+    window.tabs.setCurrentWidget(window.video_panel)
+    QApplication.processEvents()
+    panel = window.video_panel
+
+    assert panel.control_panel.x() >= panel.file_list.geometry().right()
+    assert panel.sizeHint().height() <= 380
+
+
+def test_media_tabs_preserve_preview_and_content_heights(qtbot, tmp_path: Path) -> None:
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    window.preview_preset_dock.hide()
+    window.tabs.setCurrentIndex(0)
+    QApplication.processEvents()
+    expected_heights = (window.broadcast_preview.height(), window.tabs.height())
+
+    for index in range(window.tabs.count()):
+        window.tabs.setCurrentIndex(index)
+        QApplication.processEvents()
+        assert (window.broadcast_preview.height(), window.tabs.height()) == expected_heights
 
 
 def test_non_video_preview_invalidates_video_take(qtbot, tmp_path: Path) -> None:

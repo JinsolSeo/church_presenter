@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QObject, QSize, Qt
-from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent
+from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
@@ -13,6 +14,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDockWidget,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -29,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from church_presenter.domain.enums import ChannelRole, ContentType, PauseReason, PlaybackStatus
-from church_presenter.domain.models import AppSettings, Content, SubtitleDocument
+from church_presenter.domain.models import AppSettings, Content, PreviewPreset, SubtitleDocument
 from church_presenter.domain.state import ApplicationState
 from church_presenter.media.audio_controller import AudioPlaybackController
 from church_presenter.media.base import MediaPlaybackBackend
@@ -47,6 +50,7 @@ from church_presenter.ui.output_window import BroadcastOutputWindow, VenueOutput
 from church_presenter.ui.panels.audio_panel import AudioPanel
 from church_presenter.ui.panels.black_panel import BlackPanel
 from church_presenter.ui.panels.pdf_panel import PdfPanel
+from church_presenter.ui.panels.preview_preset_panel import PreviewPresetPanel
 from church_presenter.ui.panels.subtitle_panel import SubtitlePanel
 from church_presenter.ui.panels.video_panel import VideoPanel
 from church_presenter.ui.simulation_window import SimulationWindow
@@ -66,6 +70,8 @@ class ChannelMonitor(QFrame):
         super().__init__()
         self.setObjectName("LiveMonitor" if live else "PreviewMonitor")
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
         header = QHBoxLayout()
         self.title = QLabel(title)
         self.title.setStyleSheet("font-weight:800;")
@@ -78,7 +84,10 @@ class ChannelMonitor(QFrame):
         header.addWidget(self.mode)
         layout.addLayout(header)
         self.surface = OutputSurface(coordinator)
-        layout.addWidget(AspectRatioContainer(self.surface), 1)
+        self.surface.setMinimumSize(128, 72)
+        container = AspectRatioContainer(self.surface)
+        container.setMinimumSize(128, 72)
+        layout.addWidget(container, 1)
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
         self.mode.setText(content.kind.value.upper())
@@ -105,8 +114,31 @@ class ControllerWindow(QMainWindow):
         self.screen_service = screen_service
         self.settings_service = settings_service
         self.settings = settings
+        self.preview_presets, self._preview_preset_warning = (
+            self.settings_service.load_preview_presets()
+        )
+        self.preview_preset_file: Path | None = None
+        if settings.preview_preset_file:
+            candidate = Path(settings.preview_preset_file).expanduser()
+            if candidate.is_file():
+                try:
+                    self.preview_presets = self.settings_service.load_preview_preset_file(
+                        candidate
+                    )
+                    self.preview_preset_file = candidate.resolve()
+                except (OSError, UnicodeError, KeyError, ValueError, TypeError) as error:
+                    LOGGER.exception("Could not restore worship-order file")
+                    self._preview_preset_warning = (
+                        f"예배 순서 파일을 열 수 없어 App Data 목록을 사용합니다: {error}"
+                    )
+            else:
+                self._preview_preset_warning = (
+                    "저장된 예배 순서 파일을 찾을 수 없어 App Data 목록을 사용합니다."
+                )
+                settings.preview_preset_file = ""
         self.state = ApplicationState()
         self.coordinator = PdfRenderCoordinator()
+        self._preview_preset_pdf_requests: dict[ChannelRole, object] = {}
         self.audio_device_service = AudioDeviceService()
         video_factory = video_backend_factory or (
             lambda: QtMediaBackend(
@@ -178,6 +210,8 @@ class ControllerWindow(QMainWindow):
             )
         if self._audio_startup_warning:
             self.status.setText(self._audio_startup_warning)
+        if self._preview_preset_warning:
+            self.status.setText(self._preview_preset_warning)
         if settings_warning:
             self.status.setText(settings_warning)
         if previous_unclean_exit:
@@ -186,19 +220,22 @@ class ControllerWindow(QMainWindow):
             )
 
     def _build_ui(self) -> None:
-        root_scroll = QScrollArea()
-        root_scroll.setWidgetResizable(True)
+        self.root_scroll = QScrollArea()
+        self.root_scroll.setWidgetResizable(True)
         root = QWidget()
-        root_scroll.setWidget(root)
-        self.setCentralWidget(root_scroll)
+        self.root_scroll.setWidget(root)
+        self.setCentralWidget(self.root_scroll)
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         top = QHBoxLayout()
         title = QLabel("Church Presenter · Phase 2")
         title.setStyleSheet("font-size:22px;font-weight:800;")
         self.screen_status = QLabel("화면 상태 확인 중")
         self.status = QLabel("준비됨 · 모든 Live는 BLACK")
-        self.status.setWordWrap(True)
+        self.status.setWordWrap(False)
         settings_button = QPushButton("화면 / 오디오 설정")
+        self.preview_presets_button = QPushButton("예배 순서")
         self.start_outputs_button = QPushButton("출력 시작")
         self.stop_outputs_button = QPushButton("출력 중지")
         self.start_outputs_button.setStyleSheet("font-weight:800;background:#2563eb;color:white;")
@@ -206,33 +243,31 @@ class ControllerWindow(QMainWindow):
             title,
             self.screen_status,
             settings_button,
+            self.preview_presets_button,
             self.start_outputs_button,
             self.stop_outputs_button,
         ):
             top.addWidget(widget)
         top.addStretch()
         layout.addLayout(top)
-        layout.addWidget(self.status)
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().addWidget(self.status, 1)
 
         grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
         self.broadcast_preview = ChannelMonitor("Broadcast Preview", self.coordinator, False)
         self.broadcast_live = ChannelMonitor("Broadcast Live", self.coordinator, True)
         self.venue_preview = ChannelMonitor("Venue Preview", self.coordinator, False)
         self.venue_live = ChannelMonitor("Venue Live", self.coordinator, True)
-        self.take_broadcast = QPushButton("TAKE → BROADCAST")
-        self.take_venue = QPushButton("TAKE → VENUE")
-        take_style = "font-weight:800;background:#f59e0b;color:#111827;padding:9px;"
-        self.take_broadcast.setStyleSheet(take_style)
-        self.take_venue.setStyleSheet(take_style)
         grid.addWidget(self.broadcast_preview, 0, 0)
         grid.addWidget(self.broadcast_live, 0, 1)
-        grid.addWidget(self.take_broadcast, 1, 0, 1, 2)
-        grid.addWidget(self.venue_preview, 2, 0)
-        grid.addWidget(self.venue_live, 2, 1)
-        grid.addWidget(self.take_venue, 3, 0, 1, 2)
+        grid.addWidget(self.venue_preview, 1, 0)
+        grid.addWidget(self.venue_live, 1, 1)
         grid.setRowStretch(0, 1)
-        grid.setRowStretch(2, 1)
-        layout.addLayout(grid, 2)
+        grid.setRowStretch(1, 1)
+        layout.addLayout(grid, 3)
 
         self.sync_bar = QFrame()
         self.sync_bar.setObjectName("SyncControl")
@@ -245,14 +280,12 @@ class ControllerWindow(QMainWindow):
         self.sync_content_check = QCheckBox("자막 + PDF 동시 진행")
         self.sync_content_check.setObjectName("SyncContentCheck")
         self.sync_content_check.setChecked(self.settings.subtitle_pdf_linked)
-        sync_description = QLabel("Broadcast 자막 · Venue PDF · 방향키 동시 이동")
         self.sync_previous_button = QPushButton("◀ 함께 이전")
         self.sync_next_button = QPushButton("함께 다음 ▶")
         self.sync_take_button = QPushButton("TAKE BOTH · 자막 + PDF")
         self.sync_take_button.setObjectName("DangerButton")
         sync_widgets: tuple[QWidget, ...] = (
             self.sync_content_check,
-            sync_description,
             self.sync_previous_button,
             self.sync_next_button,
             self.sync_take_button,
@@ -314,15 +347,30 @@ class ControllerWindow(QMainWindow):
         self.tabs.addTab(self.video_panel, "영상")
         self.tabs.addTab(self.audio_panel, "배경음악")
         self.tabs.addTab(self.black_panel, "검은 화면")
-        layout.addWidget(self.tabs, 3)
+        layout.addWidget(self.tabs, 2)
+
+        self.preview_preset_panel = PreviewPresetPanel(self.preview_presets)
+        self.preview_preset_panel.set_file_path(
+            str(self.preview_preset_file) if self.preview_preset_file else ""
+        )
+        self.preview_preset_dock = QDockWidget("예배 순서", self)
+        self.preview_preset_dock.setObjectName("PreviewPresetDock")
+        self.preview_preset_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.preview_preset_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        self.preview_preset_dock.setWidget(self.preview_preset_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_preset_dock)
 
         settings_button.clicked.connect(self.open_screen_settings)
+        self.preview_presets_button.clicked.connect(self._show_preview_preset_panel)
         self.start_outputs_button.clicked.connect(self.start_outputs)
         self.stop_outputs_button.clicked.connect(self.stop_outputs)
 
     def _connect_signals(self) -> None:
-        self.take_broadcast.clicked.connect(lambda: self.take(ChannelRole.BROADCAST))
-        self.take_venue.clicked.connect(lambda: self.take(ChannelRole.VENUE))
         self.subtitle_panel.preview_requested.connect(
             lambda content: self.set_preview(ChannelRole.BROADCAST, content, True)
         )
@@ -371,11 +419,24 @@ class ControllerWindow(QMainWindow):
                 f"영상 오류로 BLACK 전환: {error}",
             )
         )
+        self.coordinator.rendered.connect(self._preview_preset_pdf_rendered)
         self.screen_service.screens_changed.connect(self._screens_changed)
         self.sync_content_check.toggled.connect(self._linked_navigation_toggled)
         self.sync_previous_button.clicked.connect(lambda: self.move_linked_previews(-1))
         self.sync_next_button.clicked.connect(lambda: self.move_linked_previews(1))
         self.sync_take_button.clicked.connect(self.take_linked_previews)
+        self.preview_preset_panel.save_requested.connect(self.save_preview_preset)
+        self.preview_preset_panel.apply_requested.connect(self.apply_preview_preset)
+        self.preview_preset_panel.rename_requested.connect(self.rename_preview_preset)
+        self.preview_preset_panel.update_requested.connect(self.update_preview_preset)
+        self.preview_preset_panel.delete_requested.connect(self.delete_preview_preset)
+        self.preview_preset_panel.move_requested.connect(self.move_preview_preset)
+        self.preview_preset_panel.open_file_requested.connect(
+            self.choose_preview_preset_file
+        )
+        self.preview_preset_panel.save_file_as_requested.connect(
+            self.save_preview_preset_file_as
+        )
         self._linked_navigation_toggled(self.sync_content_check.isChecked())
 
     def _restore_content(self) -> None:
@@ -426,6 +487,394 @@ class ControllerWindow(QMainWindow):
             else f"{role.value.title()} Preview 오류: {error}"
         )
         self._refresh_channel(role)
+
+    def save_preview_preset(self, name: str) -> bool:
+        """Save or overwrite the current two-channel Preview snapshot."""
+        try:
+            preset = PreviewPreset(
+                name=name,
+                broadcast_content=(
+                    self.state.broadcast.preview_content.as_preset_reference()
+                ),
+                venue_content=self.state.venue.preview_content.as_preset_reference(),
+            )
+        except ValueError as error:
+            self.status.setText(f"프리셋 저장 실패: {error}")
+            return False
+        proposed = list(self.preview_presets)
+        existing = next(
+            (
+                index
+                for index, candidate in enumerate(proposed)
+                if candidate.name.casefold() == preset.name.casefold()
+            ),
+            None,
+        )
+        if existing is None:
+            proposed.append(preset)
+            action = "저장"
+        else:
+            proposed[existing] = preset
+            action = "덮어쓰기"
+        if not self._commit_preview_presets(
+            proposed,
+            f"'{preset.name}' Preview 프리셋 {action} 완료",
+        ):
+            return False
+        self.preview_preset_panel.mark_saved()
+        return True
+
+    def apply_preview_preset(self, name: str) -> bool:
+        """Prepare both channels from a preset without changing either Live output."""
+        preset = self._preview_preset(name)
+        if preset is None:
+            self.status.setText(f"프리셋 적용 실패: '{name}'을 찾을 수 없습니다.")
+            return False
+        contents, error = self._resolve_preview_preset(preset)
+        if error:
+            self.status.setText(f"프리셋 적용 실패 · 기존 Preview 유지: {error}")
+            return False
+        assert contents is not None
+        subtitle_position = next(
+            (
+                content.subtitle_card_index
+                for content in contents.values()
+                if content.kind is ContentType.SUBTITLE_KEY
+            ),
+            None,
+        )
+        if subtitle_position is not None:
+            self.subtitle_panel.set_preview_position(subtitle_position)
+        pdf_position = next(
+            (
+                content.pdf_page
+                for content in contents.values()
+                if content.kind is ContentType.PDF_PAGE
+            ),
+            None,
+        )
+        if pdf_position is not None:
+            self.pdf_panel.set_preview_position(pdf_position)
+        for role, content in contents.items():
+            old_request = self._preview_preset_pdf_requests.pop(role, None)
+            if old_request is not None:
+                self.coordinator.cancel(old_request)
+            ready = content.kind not in {ContentType.PDF_PAGE, ContentType.VIDEO}
+            self.set_preview(role, content, ready)
+
+        video_roles = [
+            role for role, content in contents.items() if content.kind is ContentType.VIDEO
+        ]
+        if len(video_roles) == 2 and (
+            contents[ChannelRole.BROADCAST].video_path
+            == contents[ChannelRole.VENUE].video_path
+        ):
+            video_path = contents[ChannelRole.BROADCAST].video_path
+            assert video_path is not None
+            self.video_manager.cue_both(video_path)
+        else:
+            for role in video_roles:
+                video_path = contents[role].video_path
+                assert video_path is not None
+                self.video_manager.cue_preview(role, video_path)
+
+        preparing_pdf = False
+        for role, content in contents.items():
+            if content.kind is not ContentType.PDF_PAGE:
+                continue
+            assert content.pdf_path is not None and content.pdf_page is not None
+            token = ("order-preset", uuid4().hex, role)
+            self._preview_preset_pdf_requests[role] = token
+            self.coordinator.request(
+                content.pdf_path,
+                content.pdf_page,
+                self._pdf_prepare_sizes()[role],
+                token,
+                priority=3,
+            )
+            preparing_pdf = True
+        self.preview_preset_panel.mark_applied(name)
+        self._focus_linked_controls()
+        if preparing_pdf or video_roles:
+            self.status.setText(
+                f"'{name}' Preview 준비 중 · 완료 후 중앙 TAKE BOTH를 누르십시오."
+            )
+        else:
+            self.status.setText(
+                f"'{name}' Preview 적용 완료 · 확인 후 중앙 TAKE BOTH를 누르십시오."
+            )
+        return True
+
+    def choose_preview_preset_file(self) -> bool:
+        """Choose and load a worship-order JSON document."""
+        start = (
+            str(self.preview_preset_file.parent)
+            if self.preview_preset_file is not None
+            else str(Path.home())
+        )
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            "예배 순서 파일 열기",
+            start,
+            "Church Presenter 예배 순서 (*.json);;JSON 파일 (*.json)",
+        )
+        return bool(selected) and self.load_preview_preset_file(Path(selected))
+
+    def load_preview_preset_file(self, path: Path) -> bool:
+        """Replace the active list with a user-selected worship-order file."""
+        try:
+            presets = self.settings_service.load_preview_preset_file(path)
+            self.settings_service.save_preview_presets(presets)
+        except (OSError, UnicodeError, KeyError, ValueError, TypeError) as error:
+            LOGGER.exception("Could not load worship-order file %s", path)
+            self.status.setText(f"예배 순서 파일 열기 실패 · 기존 목록 유지: {error}")
+            return False
+        self.preview_presets = presets
+        self.preview_preset_file = path.expanduser().resolve()
+        self.settings.preview_preset_file = str(self.preview_preset_file)
+        self.preview_preset_panel.applied_name = ""
+        self.preview_preset_panel.set_presets(presets)
+        self.preview_preset_panel.set_file_path(str(self.preview_preset_file))
+        try:
+            self.settings_service.save(self.settings)
+        except OSError:
+            LOGGER.exception("Could not remember worship-order file %s", path)
+            self.status.setText(
+                "예배 순서 파일은 열었지만 마지막 파일 설정은 저장하지 못했습니다."
+            )
+            return True
+        self.status.setText(
+            f"예배 순서 파일 기준으로 목록을 초기화했습니다: "
+            f"{self.preview_preset_file.name} · Preview/Live 유지"
+        )
+        return True
+
+    def save_preview_preset_file(self, path: Path | None = None) -> bool:
+        """Save the active worship order, prompting for a path when necessary."""
+        target = path or self.preview_preset_file
+        if target is None:
+            return self.save_preview_preset_file_as()
+        target = target.expanduser()
+        if target.suffix.lower() != ".json":
+            target = target.with_suffix(".json")
+        try:
+            self.settings_service.save_preview_preset_file(
+                target,
+                self.preview_presets,
+            )
+        except (OSError, ValueError, TypeError) as error:
+            LOGGER.exception("Could not save worship-order file %s", target)
+            self.status.setText(f"예배 순서 파일 저장 실패: {error}")
+            return False
+        self.preview_preset_file = target.resolve()
+        self.settings.preview_preset_file = str(self.preview_preset_file)
+        self.preview_preset_panel.set_file_path(str(self.preview_preset_file))
+        try:
+            self.settings_service.save(self.settings)
+        except OSError:
+            LOGGER.exception("Could not remember worship-order file %s", target)
+            self.status.setText(
+                "예배 순서 파일은 저장했지만 마지막 파일 설정은 저장하지 못했습니다."
+            )
+            return True
+        self.status.setText(
+            f"예배 순서 파일 저장 완료: {self.preview_preset_file.name}"
+        )
+        return True
+
+    def save_preview_preset_file_as(self) -> bool:
+        """Choose a new path and save the active worship order."""
+        suggested = (
+            str(
+                self.preview_preset_file.with_name(
+                    f"{self.preview_preset_file.stem}_수정본.json"
+                )
+            )
+            if self.preview_preset_file is not None
+            else str(Path.home() / "예배_순서.json")
+        )
+        selected, _filter = QFileDialog.getSaveFileName(
+            self,
+            "예배 순서 다른 이름으로 저장",
+            suggested,
+            "Church Presenter 예배 순서 (*.json);;JSON 파일 (*.json)",
+        )
+        return bool(selected) and self.save_preview_preset_file(Path(selected))
+
+    def rename_preview_preset(self, old_name: str, new_name: str) -> bool:
+        """Rename a worship-order preset without changing its position."""
+        preset = self._preview_preset(old_name)
+        if preset is None:
+            return False
+        if any(
+            candidate.name.casefold() == new_name.strip().casefold()
+            and candidate.name != old_name
+            for candidate in self.preview_presets
+        ):
+            self.status.setText("프리셋 이름 변경 실패: 같은 이름이 이미 있습니다.")
+            return False
+        try:
+            renamed = PreviewPreset(
+                new_name,
+                preset.broadcast_content,
+                preset.venue_content,
+            )
+        except ValueError as error:
+            self.status.setText(f"프리셋 이름 변경 실패: {error}")
+            return False
+        proposed = [renamed if item.name == old_name else item for item in self.preview_presets]
+        return self._commit_preview_presets(
+            proposed,
+            f"프리셋 이름을 '{renamed.name}'(으)로 변경했습니다.",
+        )
+
+    def update_preview_preset(self, name: str) -> bool:
+        """Overwrite one named cue with the current two-channel Preview positions."""
+        index = next(
+            (
+                candidate_index
+                for candidate_index, preset in enumerate(self.preview_presets)
+                if preset.name == name
+            ),
+            -1,
+        )
+        if index < 0:
+            self.status.setText(f"프리셋 수정 실패: '{name}'을 찾을 수 없습니다.")
+            return False
+        try:
+            updated = PreviewPreset(
+                name,
+                self.state.broadcast.preview_content.as_preset_reference(),
+                self.state.venue.preview_content.as_preset_reference(),
+            )
+        except ValueError as error:
+            self.status.setText(f"프리셋 수정 실패: {error}")
+            return False
+        proposed = list(self.preview_presets)
+        proposed[index] = updated
+        self.preview_presets = proposed
+        self.preview_preset_panel.set_presets(proposed)
+        self.preview_preset_panel.mark_applied(name)
+        self.status.setText(
+            f"'{name}' 항목을 현재 Preview 위치로 임시 수정했습니다. "
+            "JSON으로 남기려면 다른 이름을 누르십시오."
+        )
+        return True
+
+    def delete_preview_preset(self, name: str) -> bool:
+        """Delete one named Preview preset."""
+        proposed = [preset for preset in self.preview_presets if preset.name != name]
+        if len(proposed) == len(self.preview_presets):
+            return False
+        return self._commit_preview_presets(proposed, f"'{name}' 프리셋을 삭제했습니다.")
+
+    def move_preview_preset(self, name: str, offset: int) -> bool:
+        """Move a preset one position in the worship order."""
+        index = next(
+            (i for i, preset in enumerate(self.preview_presets) if preset.name == name),
+            -1,
+        )
+        destination = index + offset
+        if index < 0 or not 0 <= destination < len(self.preview_presets):
+            return False
+        proposed = list(self.preview_presets)
+        proposed[index], proposed[destination] = proposed[destination], proposed[index]
+        return self._commit_preview_presets(proposed, "예배 순서 프리셋 순서를 변경했습니다.")
+
+    def _commit_preview_presets(
+        self,
+        proposed: list[PreviewPreset],
+        success_message: str,
+    ) -> bool:
+        try:
+            self.settings_service.save_preview_presets(proposed)
+        except (OSError, ValueError, TypeError) as error:
+            LOGGER.exception("Could not save Preview presets")
+            self.status.setText(f"프리셋 저장 실패: {error}")
+            return False
+        self.preview_presets = proposed
+        self.preview_preset_panel.set_presets(proposed)
+        self.status.setText(success_message)
+        return True
+
+    def _preview_preset(self, name: str) -> PreviewPreset | None:
+        return next((preset for preset in self.preview_presets if preset.name == name), None)
+
+    def _resolve_preview_preset(
+        self,
+        preset: PreviewPreset,
+    ) -> tuple[dict[ChannelRole, Content] | None, str]:
+        """Resolve saved positions against the documents currently open in the UI."""
+        resolved: dict[ChannelRole, Content] = {}
+        for role, cue in (
+            (ChannelRole.BROADCAST, preset.broadcast_content),
+            (ChannelRole.VENUE, preset.venue_content),
+        ):
+            label = role.value.title()
+            if cue.kind is ContentType.BLACK:
+                resolved[role] = Content.black()
+                continue
+            if cue.kind is ContentType.SUBTITLE_KEY:
+                position = cue.subtitle_card_index
+                cards = self.subtitle_panel.document.cards
+                if position is None or not 0 <= position < len(cards):
+                    return None, (
+                        f"{label} 자막 카드 {self._display_position(position)}가 "
+                        "현재 자막 문서에 없습니다."
+                    )
+                resolved[role] = Content.subtitle(
+                    cards[position],
+                    position,
+                    self.subtitle_panel.subtitle_style,
+                    self.subtitle_panel.key_color,
+                )
+                continue
+            if cue.kind is ContentType.PDF_PAGE:
+                position = cue.pdf_page
+                path = self.pdf_panel.current_path
+                if path is None or not path.is_file():
+                    return None, f"{label}에 사용할 PDF를 먼저 선택하십시오."
+                if position is None or not 0 <= position < self.pdf_panel.page_count:
+                    return None, (
+                        f"{label} PDF {self._display_position(position)}쪽이 "
+                        "현재 PDF에 없습니다."
+                    )
+                resolved[role] = Content.pdf(path, position)
+                continue
+            if cue.kind is ContentType.VIDEO:
+                path = self.video_panel.selected_path
+                if path is None or not path.is_file():
+                    return None, f"{label}에 사용할 영상을 먼저 선택하십시오."
+                resolved[role] = Content.video(path)
+                continue
+            return None, f"{label} 콘텐츠 종류를 지원하지 않습니다: {cue.kind.value}"
+        return resolved, ""
+
+    @staticmethod
+    def _display_position(position: int | None) -> str:
+        return "미지정" if position is None else str(position + 1)
+
+    def _preview_preset_pdf_rendered(
+        self,
+        _key: object,
+        _image: QImage,
+        error: str,
+        token: object,
+    ) -> None:
+        if not (
+            isinstance(token, tuple)
+            and len(token) == 3
+            and token[0] == "order-preset"
+            and isinstance(token[2], ChannelRole)
+        ):
+            return
+        role = token[2]
+        if self._preview_preset_pdf_requests.get(role) != token:
+            return
+        del self._preview_preset_pdf_requests[role]
+        self.mark_preview_ready(role, not error, error)
+        if not self._preview_preset_pdf_requests and not error:
+            self.status.setText("프리셋 Preview 준비 완료 · 중앙 TAKE BOTH 가능")
 
     def send_to_both(self, content: Content, ready: bool) -> None:
         if content.kind is ContentType.SUBTITLE_KEY:
@@ -493,7 +942,10 @@ class ControllerWindow(QMainWindow):
         ):
             self.subtitle_panel.mark_live()
         if self.state.channel(role).live_content.kind is ContentType.PDF_PAGE:
-            self.pdf_panel.mark_live(role)
+            self.pdf_panel.mark_live(
+                role,
+                self.state.channel(role).live_content.pdf_page,
+            )
         self._push_live(role)
         self._refresh_channel(role)
         self.status.setText(f"{role.value.title()} TAKE 완료")
@@ -545,9 +997,15 @@ class ControllerWindow(QMainWindow):
         if self.state.broadcast.live_content.kind is ContentType.SUBTITLE_KEY:
             self.subtitle_panel.mark_live()
         if self.state.broadcast.live_content.kind is ContentType.PDF_PAGE:
-            self.pdf_panel.mark_live(ChannelRole.BROADCAST)
+            self.pdf_panel.mark_live(
+                ChannelRole.BROADCAST,
+                self.state.broadcast.live_content.pdf_page,
+            )
         if self.state.venue.live_content.kind is ContentType.PDF_PAGE:
-            self.pdf_panel.mark_live(ChannelRole.VENUE)
+            self.pdf_panel.mark_live(
+                ChannelRole.VENUE,
+                self.state.venue.live_content.pdf_page,
+            )
         self._refresh_all()
         self.status.setText(
             "TAKE BOTH 완료 · 영상 Play/Pause/Stop 양쪽 연동"
@@ -754,9 +1212,59 @@ class ControllerWindow(QMainWindow):
             self.status.setText("저장된 Controller 화면을 찾을 수 없습니다. 다시 지정하십시오.")
             return
         available = screen.availableGeometry()
+        self.resize(
+            min(self.width(), available.width()),
+            min(self.height(), available.height()),
+        )
         x = available.x() + max(0, (available.width() - self.width()) // 2)
         y = available.y() + max(0, (available.height() - self.height()) // 2)
         self.move(x, y)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """Keep restored Controller geometry inside the usable screen area."""
+        super().showEvent(event)
+        screen = self.screen() or self.application.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        self.resize(
+            min(self.width(), available.width()),
+            min(self.height(), available.height()),
+        )
+        maximum_x = available.x() + available.width() - self.width()
+        maximum_y = available.y() + available.height() - self.height()
+        self.move(
+            max(available.x(), min(self.x(), maximum_x)),
+            max(available.y(), min(self.y(), maximum_y)),
+        )
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Keep the main controls usable when the Controller becomes narrow."""
+        super().resizeEvent(event)
+        if not hasattr(self, "preview_preset_dock"):
+            return
+        if event.size().width() < 1100 and not self.preview_preset_dock.isFloating():
+            self.preview_preset_dock.hide()
+        elif event.size().width() >= 1100 and not self.preview_preset_dock.isVisible():
+            self.preview_preset_dock.setFloating(False)
+            self.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                self.preview_preset_dock,
+            )
+            self.preview_preset_dock.show()
+
+    def _show_preview_preset_panel(self) -> None:
+        """Show the preset panel docked, or floating when horizontal space is tight."""
+        if self.width() < 1100:
+            self.preview_preset_dock.setFloating(True)
+        else:
+            self.preview_preset_dock.setFloating(False)
+            self.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                self.preview_preset_dock,
+            )
+        self.preview_preset_dock.show()
+        self.preview_preset_dock.raise_()
 
     def start_outputs(self) -> bool:
         self.stop_outputs()
@@ -881,11 +1389,12 @@ class ControllerWindow(QMainWindow):
         if role is ChannelRole.BROADCAST:
             self.broadcast_preview.set_content(channel.preview_content)
             self.broadcast_live.set_content(channel.live_content)
-            self.take_broadcast.setEnabled(channel.is_ready)
         else:
             self.venue_preview.set_content(channel.preview_content)
             self.venue_live.set_content(channel.live_content)
-            self.take_venue.setEnabled(channel.is_ready)
+        self.sync_take_button.setEnabled(
+            self.state.broadcast.is_ready and self.state.venue.is_ready
+        )
 
     def _refresh_all(self) -> None:
         self._refresh_channel(ChannelRole.BROADCAST)
@@ -1059,6 +1568,11 @@ class ControllerWindow(QMainWindow):
         style.unpolish(self.sync_bar)
         style.polish(self.sync_bar)
         self.sync_bar.update()
+
+    def _focus_linked_controls(self) -> None:
+        """Hand keyboard control from a preset button to the linked control bar."""
+        self.sync_next_button.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._focus_changed(None, self.sync_next_button)
 
     def _keyboard_area(self, focus: QWidget | None) -> str | None:
         if focus is None or (focus is not self and not self.isAncestorOf(focus)):

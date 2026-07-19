@@ -27,6 +27,10 @@ def test_pdf_scan_thumbnail_and_preview_ready(qtbot, tmp_path: Path) -> None:
     panel = PdfPanel(PdfRenderCoordinator(), tmp_path)
     qtbot.addWidget(panel)
     panel.show()
+    panel.resize(1200, 700)
+    qtbot.wait(20)
+    assert panel.file_list.minimumWidth() >= 300
+    assert panel.splitter.sizes()[0] >= 300
     qtbot.waitUntil(lambda: panel.file_list.count() == 1, timeout=5000)
     preview_spy = QSignalSpy(panel.preview_requested)
     ready_spy = QSignalSpy(panel.preview_ready)

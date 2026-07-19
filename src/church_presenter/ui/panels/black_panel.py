@@ -22,7 +22,6 @@ class BlackPanel(QWidget):
             "검은 화면을 먼저 Preview에 준비한 뒤 TAKE 하십시오. "
             "Send to Both는 두 Preview에만 복사합니다."
         )
-        explanation.setWordWrap(True)
         layout.addWidget(explanation)
         row = QHBoxLayout()
         preview_broadcast = QPushButton("Broadcast Preview → BLACK")

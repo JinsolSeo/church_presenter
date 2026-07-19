@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -48,6 +49,11 @@ class SubtitlePanel(QWidget):
         layout = QVBoxLayout(self)
         toolbar = QHBoxLayout()
         self.file_label = QLabel("자막 파일 없음")
+        self.file_label.setMinimumWidth(0)
+        self.file_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         open_button = QPushButton("TXT 열기")
         self.save_button = QPushButton("저장")
         save_as_button = QPushButton("다른 이름으로 저장")
@@ -67,6 +73,7 @@ class SubtitlePanel(QWidget):
             self.group_spin,
         ):
             toolbar.addWidget(widget)
+        toolbar.setStretch(0, 1)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
@@ -178,6 +185,7 @@ class SubtitlePanel(QWidget):
             QMessageBox.critical(self, "저장 실패", str(error))
             return False
         self.file_label.setText(str(path))
+        self.file_label.setToolTip(str(path))
         self._refresh_labels()
         self.document_changed.emit(self.document)
         return True
@@ -209,6 +217,18 @@ class SubtitlePanel(QWidget):
         self.preview_index = max(0, min(destination, count - 1))
         self.card_list.setCurrentRow(self.preview_index)
         self._emit_preview()
+
+    def set_preview_position(self, destination: int) -> None:
+        """Synchronize the card selection without emitting another Preview request."""
+        count = len(self.document.cards)
+        if not 0 <= destination < count:
+            return
+        self.preview_index = destination
+        self.card_list.blockSignals(True)
+        self.card_list.setCurrentRow(destination)
+        self.card_list.blockSignals(False)
+        self._populate_source_group()
+        self._refresh_labels()
 
     def move_preview(self, offset: int) -> None:
         self.navigate(self.preview_index + offset)

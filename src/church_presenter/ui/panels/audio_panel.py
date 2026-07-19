@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QVBoxLayout,
@@ -68,6 +69,12 @@ class AudioPanel(QWidget):
         toolbar = QHBoxLayout()
         folder_button = QPushButton("음악 폴더")
         self.folder_label = QLabel(str(self.folder or "선택되지 않음"))
+        self.folder_label.setMinimumWidth(0)
+        self.folder_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.folder_label.setToolTip(str(self.folder or ""))
         self.sort_combo = QComboBox()
         self.sort_combo.addItem("파일명", SortField.NAME.value)
         self.sort_combo.addItem("수정 날짜", SortField.MODIFIED.value)
@@ -83,6 +90,7 @@ class AudioPanel(QWidget):
             refresh_button,
         ):
             toolbar.addWidget(widget)
+        toolbar.setStretch(1, 1)
         layout.addLayout(toolbar)
 
         splitter = QSplitter()
@@ -145,7 +153,6 @@ class AudioPanel(QWidget):
             )
         )
         self.status_label = QLabel("배경음악 정지")
-        self.status_label.setWordWrap(True)
         for column, widget in enumerate(
             (previous_button, self.play_button, self.pause_button, self.stop_button, next_button)
         ):
@@ -197,6 +204,7 @@ class AudioPanel(QWidget):
             return
         self.folder = Path(selected)
         self.folder_label.setText(selected)
+        self.folder_label.setToolTip(selected)
         self.folder_changed.emit(selected)
         self.refresh_library()
 

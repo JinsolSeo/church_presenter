@@ -10,7 +10,7 @@ from typing import Any, Protocol, TypeVar
 
 from platformdirs import user_config_path
 
-from church_presenter.domain.models import AppSettings, SubtitleStyle
+from church_presenter.domain.models import AppSettings, PreviewPreset, SubtitleStyle
 
 LOGGER = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -34,6 +34,7 @@ class SettingsService:
         self.config_dir = config_dir or user_config_path("Church Presenter", "JinsolSeo")
         self.settings_path = self.config_dir / "settings.json"
         self.presets_path = self.config_dir / "subtitle_presets.json"
+        self.preview_presets_path = self.config_dir / "preview_presets.json"
 
     def load(self) -> LoadResult:
         if not self.settings_path.exists():
@@ -91,6 +92,83 @@ class SettingsService:
             "presets": {name: style.to_dict() for name, style in presets.items()},
         }
         self._atomic_json_write(self.presets_path, payload)
+
+    def load_preview_presets(self) -> tuple[list[PreviewPreset], str]:
+        """Load ordered worship Preview presets, recovering corrupt data safely."""
+        if not self.preview_presets_path.exists():
+            return [], ""
+        try:
+            data = json.loads(self.preview_presets_path.read_text(encoding="utf-8"))
+            return self._preview_presets_from_payload(data), ""
+        except (
+            OSError,
+            UnicodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+        ) as error:
+            self._backup_corrupt(self.preview_presets_path)
+            LOGGER.exception("Preview preset recovery used an empty list: %s", error)
+            return [], "예배 순서 프리셋이 손상되어 빈 목록으로 복구했습니다."
+
+    def save_preview_presets(self, presets: list[PreviewPreset]) -> None:
+        """Atomically save presets in their operator-defined order."""
+        self._atomic_json_write(
+            self.preview_presets_path,
+            self._preview_presets_payload(presets),
+        )
+
+    def load_preview_preset_file(self, path: Path) -> list[PreviewPreset]:
+        """Load a user-selected worship-order JSON file."""
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return self._preview_presets_from_payload(data)
+
+    def save_preview_preset_file(
+        self,
+        path: Path,
+        presets: list[PreviewPreset],
+    ) -> None:
+        """Atomically save a portable worship-order JSON document."""
+        self._atomic_json_write(path, self._preview_presets_payload(presets))
+
+    @staticmethod
+    def _preview_presets_from_payload(data: object) -> list[PreviewPreset]:
+        if not isinstance(data, dict):
+            raise TypeError("preview preset root must be an object")
+        rows = data.get("presets", [])
+        if not isinstance(rows, list):
+            raise TypeError("preview presets must be a list")
+        version = data.get("version", 1)
+        if version == 2:
+            presets = [
+                PreviewPreset.from_preset_dict(row)
+                for row in rows
+                if isinstance(row, dict)
+            ]
+        else:
+            presets = [
+                PreviewPreset.from_dict(row).as_file_independent()
+                for row in rows
+                if isinstance(row, dict)
+            ]
+        if len(presets) != len(rows):
+            raise TypeError("each preview preset must be an object")
+        names = [preset.name.casefold() for preset in presets]
+        if len(names) != len(set(names)):
+            raise ValueError("preview preset names must be unique")
+        return presets
+
+    @staticmethod
+    def _preview_presets_payload(presets: list[PreviewPreset]) -> dict[str, Any]:
+        names = [preset.name.casefold() for preset in presets]
+        if len(names) != len(set(names)):
+            raise ValueError("Preview preset names must be unique")
+        return {
+            "version": 2,
+            "document_type": "church_presenter_worship_order",
+            "presets": [preset.as_file_independent().to_preset_dict() for preset in presets],
+        }
 
     def _atomic_json_write(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -108,6 +108,152 @@ class Content:
         """Create a cueable local-video descriptor."""
         return cls(ContentType.VIDEO, video_path=path.expanduser().resolve())
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible content snapshot."""
+        return {
+            "kind": self.kind.value,
+            "text": self.text,
+            "subtitle_card_index": self.subtitle_card_index,
+            "pdf_path": str(self.pdf_path) if self.pdf_path is not None else None,
+            "pdf_page": self.pdf_page,
+            "video_path": str(self.video_path) if self.video_path is not None else None,
+            "subtitle_style": self.subtitle_style.to_dict(),
+            "key_color": self.key_color,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Content:
+        """Restore a persisted content snapshot."""
+        kind = ContentType(str(data["kind"]))
+        style_data = data.get("subtitle_style", {})
+        if not isinstance(style_data, dict):
+            raise TypeError("subtitle_style must be an object")
+        pdf_path = data.get("pdf_path")
+        video_path = data.get("video_path")
+        return cls(
+            kind=kind,
+            text=str(data.get("text", "")),
+            subtitle_card_index=_optional_int(data.get("subtitle_card_index")),
+            pdf_path=Path(pdf_path) if isinstance(pdf_path, str) and pdf_path else None,
+            pdf_page=_optional_int(data.get("pdf_page")),
+            video_path=Path(video_path) if isinstance(video_path, str) and video_path else None,
+            subtitle_style=SubtitleStyle.from_dict(style_data),
+            key_color=str(data.get("key_color", "#00FF00")),
+        )
+
+    def as_preset_reference(self) -> Content:
+        """Return a file-independent cue containing only type and position."""
+        if self.kind is ContentType.SUBTITLE_KEY:
+            return Content(
+                kind=self.kind,
+                subtitle_card_index=self.subtitle_card_index,
+            )
+        if self.kind is ContentType.PDF_PAGE:
+            return Content(kind=self.kind, pdf_page=self.pdf_page)
+        if self.kind is ContentType.VIDEO:
+            return Content(kind=self.kind)
+        return Content.black()
+
+    def to_preset_dict(self) -> dict[str, Any]:
+        """Serialize a file-independent worship-order cue."""
+        data: dict[str, Any] = {"kind": self.kind.value}
+        if self.kind is ContentType.SUBTITLE_KEY:
+            data["position"] = self.subtitle_card_index
+        elif self.kind is ContentType.PDF_PAGE:
+            data["position"] = self.pdf_page
+        return data
+
+    @classmethod
+    def from_preset_dict(cls, data: dict[str, Any]) -> Content:
+        """Restore a file-independent worship-order cue."""
+        kind = ContentType(str(data["kind"]))
+        position = _optional_int(data.get("position"))
+        if kind is ContentType.SUBTITLE_KEY:
+            return cls(kind=kind, subtitle_card_index=position)
+        if kind is ContentType.PDF_PAGE:
+            return cls(kind=kind, pdf_page=position)
+        if kind is ContentType.VIDEO:
+            return cls(kind=kind)
+        return cls.black()
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("expected an integer or null")
+    return int(value)
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewPreset:
+    """Named Broadcast/Venue Preview pair used as a worship-order cue."""
+
+    name: str
+    broadcast_content: Content
+    venue_content: Content
+
+    def __post_init__(self) -> None:
+        cleaned = self.name.strip()
+        if not cleaned:
+            raise ValueError("preset name cannot be blank")
+        if len(cleaned) > 80:
+            raise ValueError("preset name cannot exceed 80 characters")
+        if cleaned != self.name:
+            object.__setattr__(self, "name", cleaned)
+        if self.venue_content.kind is ContentType.SUBTITLE_KEY:
+            raise ValueError("venue preview cannot contain subtitles")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible preset."""
+        return {
+            "name": self.name,
+            "broadcast_content": self.broadcast_content.to_dict(),
+            "venue_content": self.venue_content.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PreviewPreset:
+        """Restore a named Preview pair."""
+        broadcast = data.get("broadcast_content")
+        venue = data.get("venue_content")
+        if not isinstance(broadcast, dict) or not isinstance(venue, dict):
+            raise TypeError("preset content must be an object")
+        return cls(
+            name=str(data["name"]),
+            broadcast_content=Content.from_dict(broadcast),
+            venue_content=Content.from_dict(venue),
+        )
+
+    def as_file_independent(self) -> PreviewPreset:
+        """Drop source paths and rendered text from this preset."""
+        return PreviewPreset(
+            self.name,
+            self.broadcast_content.as_preset_reference(),
+            self.venue_content.as_preset_reference(),
+        )
+
+    def to_preset_dict(self) -> dict[str, Any]:
+        """Return the version-2 worship-order representation."""
+        return {
+            "name": self.name,
+            "broadcast": self.broadcast_content.to_preset_dict(),
+            "venue": self.venue_content.to_preset_dict(),
+        }
+
+    @classmethod
+    def from_preset_dict(cls, data: dict[str, Any]) -> PreviewPreset:
+        """Restore a version-2 file-independent worship-order preset."""
+        broadcast = data.get("broadcast")
+        venue = data.get("venue")
+        if not isinstance(broadcast, dict) or not isinstance(venue, dict):
+            raise TypeError("preset cues must be objects")
+        return cls(
+            name=str(data["name"]),
+            broadcast_content=Content.from_preset_dict(broadcast),
+            venue_content=Content.from_preset_dict(venue),
+        )
+
 
 @dataclass(slots=True)
 class SubtitleDocument:
@@ -353,6 +499,7 @@ class AppSettings:
     simulation_venue_connected: bool = True
     controller_geometry: str = ""
     panel_layout: str = "tabs:0"
+    preview_preset_file: str = ""
     last_subtitle_file: str = ""
     subtitle_group_size: int = 2
     last_pdf_file: str = ""
