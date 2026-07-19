@@ -4,6 +4,11 @@ Church Presenter는 한 명의 운영자가 방송용 ATEM Key/PDF/영상 출력
 PDF/영상 출력을 독립적으로 제어하는 PySide6 데스크톱 애플리케이션입니다.
 Phase 2는 Phase 1의 TXT 자막, PDF, BLACK, Preview/Live TAKE, 멀티모니터 및
 Simulation Mode에 로컬 영상과 전역 배경음악 재생목록을 추가합니다.
+Controller UI는 FHD(1920×1080)를 기준으로 구성되며 Light Professional, Dark
+Modern, Minimalist Light 테마를 실행 중 즉시 전환하고 다음 실행에 복원합니다.
+노트북 크기에서는 컴팩트 밀도가 자동 적용되고, 상단 Preview/Live 영역과 하단
+콘텐츠 영역의 구분선을 직접 조절할 수 있습니다. 하단 전체에는 바깥 스크롤바가
+생기지 않으며 긴 데이터 목록만 해당 목록 안에서 스크롤됩니다.
 
 운영 중에는 `자막 + PDF 동시 진행`으로 Broadcast 자막과 Venue PDF를 한 번의
 방향키/TAKE BOTH로 제어할 수 있고, PDF만 양쪽에 보낼 때는 지속 연동 토글을
@@ -30,6 +35,10 @@ python -m church_presenter
 선택해도 출력은 바뀌지 않으며, 해당 TAKE 또는 TAKE BOTH를 눌러야 Live가
 변경됩니다. 출력 창이 닫혀 있다면 TAKE가 지정된 출력 창을 먼저 시작하고, 창을
 시작할 수 없으면 기존 Live를 유지합니다.
+
+상단 `테마` 선택기는 Controller UI에만 적용됩니다. Preview/Live 콘텐츠와 물리·가상
+출력 렌더링은 테마를 바꿔도 변경되지 않습니다. 잘못되거나 삭제된 테마가 저장되어
+있으면 Light Professional로 안전하게 복구됩니다.
 
 ## 품질 확인
 

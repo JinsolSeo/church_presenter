@@ -8,6 +8,7 @@ from church_presenter.domain.enums import ChannelRole
 from church_presenter.domain.models import Content
 from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.pdf_service import PdfRenderCoordinator
+from church_presenter.ui.labels import channel_label
 
 
 class OutputWindow(QMainWindow):
@@ -22,7 +23,7 @@ class OutputWindow(QMainWindow):
         self.role = role
         self.surface = OutputSurface(coordinator)
         self.setCentralWidget(self.surface)
-        self.setWindowTitle(f"{role.value.title()} Output")
+        self.setWindowTitle(f"{channel_label(role)} 출력")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.Window

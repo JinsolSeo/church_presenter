@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from church_presenter.domain.enums import ChannelRole
 from church_presenter.domain.models import Content
@@ -23,24 +23,23 @@ class BlackPanel(QWidget):
             "Send to Both는 두 Preview에만 복사합니다."
         )
         layout.addWidget(explanation)
-        row = QHBoxLayout()
-        preview_broadcast = QPushButton("Broadcast Preview → BLACK")
-        preview_venue = QPushButton("Venue Preview → BLACK")
+        actions = QGridLayout()
+        preview_broadcast = QPushButton("송출 Preview → BLACK")
+        preview_venue = QPushButton("현장 Preview → BLACK")
         send_both = QPushButton("Send to Both")
-        take_broadcast = QPushButton("TAKE Broadcast")
-        take_venue = QPushButton("TAKE Venue")
+        take_broadcast = QPushButton("TAKE 송출")
+        take_venue = QPushButton("TAKE 현장")
         take_both = QPushButton("TAKE BOTH")
-        take_both.setStyleSheet("font-weight:700;background:#dc2626;color:white;padding:10px;")
-        for widget in (
-            preview_broadcast,
-            preview_venue,
-            send_both,
-            take_broadcast,
-            take_venue,
-            take_both,
-        ):
-            row.addWidget(widget)
-        layout.addLayout(row)
+        send_both.setProperty("variant", "primary")
+        for take_button in (take_broadcast, take_venue, take_both):
+            take_button.setProperty("variant", "take")
+        actions.addWidget(preview_broadcast, 0, 0)
+        actions.addWidget(preview_venue, 0, 1)
+        actions.addWidget(send_both, 0, 2)
+        actions.addWidget(take_broadcast, 1, 0)
+        actions.addWidget(take_venue, 1, 1)
+        actions.addWidget(take_both, 1, 2)
+        layout.addLayout(actions)
         layout.addStretch()
         preview_broadcast.clicked.connect(
             lambda: self.preview_requested.emit(ChannelRole.BROADCAST.value, Content.black())

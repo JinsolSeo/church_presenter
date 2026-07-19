@@ -93,8 +93,15 @@ pixel size. A bounded LRU image cache avoids repeated work and naturally
 invalidates when a file's modification time changes. Thumbnail requests are
 issued lazily for visible/listed pages and may be cancelled by generation token.
 Errors become user-visible item/channel errors and never terminate the app.
-Thumbnail drag ordering is stored as a per-document permutation of source page
-indices. It changes navigation order without rewriting the source PDF.
+Thumbnail items use a static left-to-right grid and source-page ascending order.
+Drag/drop and previously persisted custom permutations are intentionally ignored
+so operator navigation and visual order cannot diverge.
+The PDF library itself uses one fixed filename-descending order; removing runtime
+sort controls keeps the operator's file positions stable between selections.
+Two independent Preview target checkboxes replace the single-target combo. One
+checked target prepares that channel, while two checked targets reuse the existing
+atomic two-channel preparation path. The selected page and Live summary remain in
+domain state rather than occupying a persistent text row below the thumbnails.
 
 ## Screens and simulation
 
@@ -103,6 +110,41 @@ accepts injected virtual screens for CI and tests. Physical output is opened onl
 after the operator presses Start Outputs. Broadcast and venue cannot share a
 physical screen. Simulation may use duplicate/injected screens and presents
 resizable 16:9 windows backed by the same `OutputSurface`.
+
+## Controller theme system
+
+`ThemeManager` discovers JSON themes from the packaged `ui/themes` directory,
+validates their common color, metric, spacing, and typography token schema, and
+renders one shared `app.qss` template. Theme JSON is the visual-token source of
+truth; Python widgets use semantic properties such as `primary`, `take`, and
+`danger` instead of storing theme colors. A missing token, invalid value,
+duplicate ID, malformed JSON, or unresolved QSS placeholder prevents that theme
+from being applied. A missing or invalid saved selection falls back to Light
+Professional without terminating the application.
+
+Settings are loaded before the initial theme is applied. The selected theme ID is
+persisted in `AppSettings.current_theme`, while the active `QPalette` is derived
+from the same tokens to keep native Qt controls consistent with QSS. Theme changes
+affect Controller chrome only: `ApplicationState`, Preview/Live content, and the
+shared `OutputSurface` rendering contract remain unchanged. The Controller layout
+uses 1920×1080 as its design baseline and layout/size policies rather than fixed
+coordinates so it can scale down to its supported 800×600 minimum and across DPI
+profiles.
+
+The main workspace is a vertical `QSplitter`. Its upper child owns the four
+Preview/Live monitors and linked TAKE controls; its lower child is a scroll area
+containing the content tabs. The default 60:40 allocation protects monitoring
+space, while operators can drag the divider and the serialized splitter state is
+stored in `AppSettings.workspace_splitter_state`. `ResponsiveContentTabs` removes
+the aggregate minimum height inherited from inactive tabs, so the lower workspace
+fits its allocation without an outer scrollbar. Lists that contain actual data
+retain their own local scrolling.
+
+Controller density is derived automatically from the current window dimensions,
+not from a user preference: widths below 1440 or heights at or below 900 use the
+compact theme metrics. Compact mode also reduces PDF thumbnail geometry and video
+panel chrome. Window resizing never hides or floats the worship-order dock; its
+visibility and dock/floating state remain under explicit operator control.
 
 ## Persistence and recovery
 

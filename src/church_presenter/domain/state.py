@@ -26,7 +26,7 @@ class ChannelState:
         if not self.is_ready:
             return False, self.last_error or "Preview content is still preparing."
         if self.role is ChannelRole.VENUE and content.kind is ContentType.SUBTITLE_KEY:
-            return False, "Venue output does not support subtitles."
+            return False, "현장 출력은 자막을 지원하지 않습니다."
         if content.kind is ContentType.PDF_PAGE:
             if content.pdf_path is None or content.pdf_page is None:
                 return False, "PDF page is incomplete."

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -46,6 +47,10 @@ class SubtitlePanel(QWidget):
         self.preview_index = -1
         self.live_index = -1
         self._selected_source_index = -1
+        self._card_live_background = QColor(Qt.GlobalColor.red)
+        self._card_preview_background = QColor(Qt.GlobalColor.darkCyan)
+        self._card_text = QColor(Qt.GlobalColor.black)
+        self._card_active_text = QColor(Qt.GlobalColor.white)
         layout = QVBoxLayout(self)
         toolbar = QHBoxLayout()
         self.file_label = QLabel("자막 파일 없음")
@@ -55,6 +60,7 @@ class SubtitlePanel(QWidget):
             QSizePolicy.Policy.Preferred,
         )
         open_button = QPushButton("TXT 열기")
+        open_button.setProperty("variant", "primary")
         self.save_button = QPushButton("저장")
         save_as_button = QPushButton("다른 이름으로 저장")
         reload_button = QPushButton("다시 불러오기")
@@ -82,6 +88,7 @@ class SubtitlePanel(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(QLabel("출력 카드 (파생 데이터)"))
         self.card_list = QListWidget()
+        self.card_list.setObjectName("SubtitleCardList")
         self.card_list.setAlternatingRowColors(True)
         left_layout.addWidget(self.card_list)
         splitter.addWidget(left)
@@ -97,6 +104,7 @@ class SubtitlePanel(QWidget):
         actions = QGridLayout()
         add_button = QPushButton("새 줄 추가")
         delete_button = QPushButton("줄 삭제")
+        delete_button.setProperty("variant", "danger")
         up_button = QPushButton("위로")
         down_button = QPushButton("아래로")
         actions.addWidget(add_button, 0, 0)
@@ -122,6 +130,21 @@ class SubtitlePanel(QWidget):
         up_button.clicked.connect(lambda: self._move_line(-1))
         down_button.clicked.connect(lambda: self._move_line(1))
         self._refresh()
+
+    def set_card_theme(
+        self,
+        *,
+        live_background: str,
+        preview_background: str,
+        text: str,
+        active_text: str,
+    ) -> None:
+        """Apply semantic theme colors to subtitle navigation cards."""
+        self._card_live_background = QColor(live_background)
+        self._card_preview_background = QColor(preview_background)
+        self._card_text = QColor(text)
+        self._card_active_text = QColor(active_text)
+        self._refresh_labels()
 
     def set_style(self, style: SubtitleStyle, key_color: str) -> None:
         self.subtitle_style = style
@@ -340,6 +363,14 @@ class SubtitlePanel(QWidget):
         self._refresh_labels()
 
     def _refresh_labels(self) -> None:
+        selected_card_live = (
+            self.live_index >= 0 and self.live_index == self.preview_index
+        )
+        if self.card_list.property("selectedCardLive") != selected_card_live:
+            self.card_list.setProperty("selectedCardLive", selected_card_live)
+            style = self.card_list.style()
+            style.unpolish(self.card_list)
+            style.polish(self.card_list)
         for index in range(self.card_list.count()):
             item = self.card_list.item(index)
             labels: list[str] = []
@@ -347,26 +378,18 @@ class SubtitlePanel(QWidget):
                 labels.append("LIVE")
             if index == self.preview_index:
                 labels.append("PREVIEW")
-            elif index == self.preview_index - 1:
-                labels.append("PREVIOUS")
-            elif index == self.preview_index + 1:
-                labels.append("NEXT")
-            else:
-                labels.append("NORMAL")
             card = self.document.cards[index]
-            item.setText(f"[{' + '.join(labels)}]  {card}")
+            prefix = f"[{' + '.join(labels)}]  " if labels else ""
+            item.setText(prefix + card)
             if index == self.live_index:
-                item.setBackground(Qt.GlobalColor.red)
-                item.setForeground(Qt.GlobalColor.white)
+                item.setBackground(self._card_live_background)
+                item.setForeground(self._card_active_text)
             elif index == self.preview_index:
-                item.setBackground(Qt.GlobalColor.darkCyan)
-                item.setForeground(Qt.GlobalColor.white)
-            elif index in {self.preview_index - 1, self.preview_index + 1}:
-                item.setBackground(Qt.GlobalColor.lightGray)
-                item.setForeground(Qt.GlobalColor.black)
+                item.setBackground(self._card_preview_background)
+                item.setForeground(self._card_active_text)
             else:
                 item.setBackground(Qt.GlobalColor.transparent)
-                item.setForeground(Qt.GlobalColor.black)
+                item.setForeground(self._card_text)
         modified = " ● 수정됨" if self.document.is_modified else ""
         source = str(self.document.path) if self.document.path else "자막 파일 없음"
         self.file_label.setText(source + modified)

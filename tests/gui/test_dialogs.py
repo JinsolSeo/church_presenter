@@ -60,6 +60,8 @@ def test_screen_settings_exposes_virtual_profile_and_connections(qtbot) -> None:
     assert dialog.height_spin.value() == 1080
     assert dialog.broadcast_connected.isChecked()
     assert dialog.venue_connected.isChecked()
+    assert dialog.broadcast_connected.text() == "가상 송출 화면 연결됨"
+    assert dialog.venue_connected.text() == "가상 현장 화면 연결됨"
     assert dialog.audio_output_combo.currentData() == "usb-speaker"
     assert "MacBook Speakers" in dialog.audio_output_combo.itemText(0)
 

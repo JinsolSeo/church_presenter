@@ -86,12 +86,16 @@ def test_media_tabs_preserve_preview_and_content_heights(qtbot, tmp_path: Path) 
     window.preview_preset_dock.hide()
     window.tabs.setCurrentIndex(0)
     QApplication.processEvents()
-    expected_heights = (window.broadcast_preview.height(), window.tabs.height())
+    expected_heights = (
+        window.broadcast_preview.height(),
+        window.content_scroll.height(),
+    )
 
     for index in range(window.tabs.count()):
         window.tabs.setCurrentIndex(index)
         QApplication.processEvents()
-        assert (window.broadcast_preview.height(), window.tabs.height()) == expected_heights
+        assert abs(window.broadcast_preview.height() - expected_heights[0]) <= 1
+        assert abs(window.content_scroll.height() - expected_heights[1]) <= 1
 
 
 def test_non_video_preview_invalidates_video_take(qtbot, tmp_path: Path) -> None:

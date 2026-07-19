@@ -52,7 +52,7 @@ class SubtitleStyleDialog(QDialog):
         root = QVBoxLayout(self)
         if warning:
             warning_label = QLabel(warning)
-            warning_label.setStyleSheet("color:#b45309;font-weight:700;")
+            warning_label.setProperty("role", "warning")
             root.addWidget(warning_label)
 
         preset_row = QHBoxLayout()
@@ -63,6 +63,7 @@ class SubtitleStyleDialog(QDialog):
         new_button = QPushButton("새 프리셋")
         rename_button = QPushButton("이름 변경")
         delete_button = QPushButton("삭제")
+        delete_button.setProperty("variant", "danger")
         default_button = QPushButton("기본 지정")
         for widget in (
             self.preset_combo,
@@ -133,7 +134,7 @@ class SubtitleStyleDialog(QDialog):
 
         self.warning = QLabel()
         self.warning.setWordWrap(True)
-        self.warning.setStyleSheet("color:#b45309;font-weight:700;")
+        self.warning.setProperty("role", "warning")
         root.addWidget(self.warning)
         self.preview = OutputSurface(coordinator)
         root.addWidget(AspectRatioContainer(self.preview), 1)

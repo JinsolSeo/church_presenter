@@ -34,6 +34,5 @@ class ColorButton(QPushButton):
         foreground = "#111827" if self._color.lightness() > 145 else "#FFFFFF"
         self.setText(self.color)
         self.setStyleSheet(
-            f"background:{self.color};color:{foreground};font-weight:700;"
-            "border:1px solid #94a3b8;padding:5px;"
+            f"background-color:{self.color};color:{foreground};font-weight:700;"
         )

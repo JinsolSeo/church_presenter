@@ -483,7 +483,7 @@ class AppSettings:
     video_folder: str = ""
     audio_folder: str = ""
     sort_field: SortField = SortField.NAME
-    sort_descending: bool = False
+    sort_descending: bool = True
     video_sort_field: SortField = SortField.NAME
     video_sort_descending: bool = False
     audio_sort_field: SortField = SortField.NAME
@@ -499,6 +499,8 @@ class AppSettings:
     simulation_venue_connected: bool = True
     controller_geometry: str = ""
     panel_layout: str = "tabs:0"
+    workspace_splitter_state: str = ""
+    current_theme: str = "light_professional"
     preview_preset_file: str = ""
     last_subtitle_file: str = ""
     subtitle_group_size: int = 2

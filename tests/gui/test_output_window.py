@@ -19,6 +19,7 @@ def test_output_window_covers_assigned_screen_without_native_fullscreen(qtbot) -
 
     window.start_on_screen(screen)
 
+    assert window.windowTitle() == "송출 출력"
     handle = window.windowHandle()
     assert handle is not None
     assert handle.screen() is screen

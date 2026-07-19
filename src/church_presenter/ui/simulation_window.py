@@ -6,6 +6,7 @@ from church_presenter.domain.enums import ChannelRole
 from church_presenter.domain.models import Content
 from church_presenter.rendering.output_surface import AspectRatioContainer, OutputSurface
 from church_presenter.services.pdf_service import PdfRenderCoordinator
+from church_presenter.ui.labels import channel_label
 
 
 class SimulationWindow(QMainWindow):
@@ -23,11 +24,11 @@ class SimulationWindow(QMainWindow):
         self.surface = OutputSurface(coordinator, render_scale=device_pixel_ratio)
         self.profile = profile
         self.device_pixel_ratio = device_pixel_ratio
-        self.setWindowTitle(f"{role.value.title()} Output Simulator")
+        self.setWindowTitle(f"{channel_label(role)} 출력 시뮬레이터")
         root = QWidget()
         layout = QVBoxLayout(root)
         label = QLabel(f"Virtual {profile[0]}x{profile[1]} · DPR {device_pixel_ratio:.2f} · LIVE")
-        label.setStyleSheet("font-weight: 700; color: #ef4444;")
+        label.setProperty("role", "danger")
         layout.addWidget(label)
         layout.addWidget(AspectRatioContainer(self.surface), 1)
         self.setCentralWidget(root)

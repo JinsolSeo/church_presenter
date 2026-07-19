@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QObject, QSize, Qt
+from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -25,7 +25,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -46,6 +48,7 @@ from church_presenter.services.screen_service import ScreenService, validate_rol
 from church_presenter.services.settings_service import SettingsService
 from church_presenter.ui.dialogs.screen_settings_dialog import ScreenSettingsDialog
 from church_presenter.ui.dialogs.subtitle_style_dialog import SubtitleStyleDialog
+from church_presenter.ui.labels import channel_label
 from church_presenter.ui.output_window import BroadcastOutputWindow, VenueOutputWindow
 from church_presenter.ui.panels.audio_panel import AudioPanel
 from church_presenter.ui.panels.black_panel import BlackPanel
@@ -54,8 +57,15 @@ from church_presenter.ui.panels.preview_preset_panel import PreviewPresetPanel
 from church_presenter.ui.panels.subtitle_panel import SubtitlePanel
 from church_presenter.ui.panels.video_panel import VideoPanel
 from church_presenter.ui.simulation_window import SimulationWindow
+from church_presenter.ui.styles import DEFAULT_THEME_ID, ThemeManager
 
 LOGGER = logging.getLogger(__name__)
+CONTROLLER_DESIGN_SIZE = QSize(1920, 1080)
+CONTROLLER_DEFAULT_SIZE = QSize(1600, 900)
+CONTROLLER_MINIMUM_SIZE = QSize(800, 600)
+COMPACT_HEADER_WIDTH = 1100
+COMPACT_DENSITY_WIDTH = 1440
+COMPACT_DENSITY_HEIGHT = 900
 
 
 class ChannelMonitor(QFrame):
@@ -63,36 +73,77 @@ class ChannelMonitor(QFrame):
 
     def __init__(
         self,
-        title: str,
+        channel_name: str,
         coordinator: PdfRenderCoordinator,
         live: bool,
     ) -> None:
         super().__init__()
+        state_role = "live" if live else "preview"
+        state_name = "LIVE" if live else "PREVIEW"
         self.setObjectName("LiveMonitor" if live else "PreviewMonitor")
+        self.setProperty("stateRole", state_role)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 8)
-        layout.setSpacing(4)
-        header = QHBoxLayout()
-        self.title = QLabel(title)
-        self.title.setStyleSheet("font-weight:800;")
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header_frame = QFrame()
+        header_frame.setObjectName("MonitorHeader")
+        header_frame.setProperty("stateRole", state_role)
+        self.header_layout = QHBoxLayout(header_frame)
+        self.header_layout.setContentsMargins(12, 8, 12, 8)
+        self.header_layout.setSpacing(8)
+        self.state_label = QLabel(state_name)
+        self.state_label.setObjectName("MonitorState")
+        self.state_label.setProperty("stateRole", state_role)
+        self.title = QLabel(channel_name)
+        self.title.setProperty("role", "secondary")
         self.mode = QLabel("BLACK")
-        self.mode.setStyleSheet(
-            "font-weight:800;color:#dc2626;" if live else "font-weight:800;color:#2563eb;"
-        )
-        header.addWidget(self.title)
-        header.addStretch()
-        header.addWidget(self.mode)
-        layout.addLayout(header)
+        self.mode.setObjectName("ContentTypeBadge")
+        self.header_layout.addWidget(self.state_label)
+        self.header_layout.addWidget(self.title)
+        self.header_layout.addStretch()
+        self.header_layout.addWidget(self.mode)
+        layout.addWidget(header_frame)
+
+        content_frame = QFrame()
+        self.content_layout = QVBoxLayout(content_frame)
+        self.content_layout.setContentsMargins(12, 10, 12, 12)
         self.surface = OutputSurface(coordinator)
-        self.surface.setMinimumSize(128, 72)
-        container = AspectRatioContainer(self.surface)
-        container.setMinimumSize(128, 72)
-        layout.addWidget(container, 1)
+        self.surface.setMinimumSize(160, 90)
+        self.container = AspectRatioContainer(self.surface)
+        self.container.setMinimumSize(160, 90)
+        self.content_layout.addWidget(self.container, 1)
+        layout.addWidget(content_frame, 1)
+        self._compact = False
+
+    def set_compact(self, compact: bool) -> None:
+        """Reduce only monitor chrome when vertical workspace is constrained."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        if compact:
+            self.header_layout.setContentsMargins(8, 4, 8, 4)
+            self.content_layout.setContentsMargins(8, 4, 8, 6)
+            self.surface.setMinimumSize(64, 36)
+            self.container.setMinimumSize(64, 36)
+        else:
+            self.header_layout.setContentsMargins(12, 8, 12, 8)
+            self.content_layout.setContentsMargins(12, 10, 12, 12)
+            self.surface.setMinimumSize(160, 90)
+            self.container.setMinimumSize(160, 90)
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
         self.mode.setText(content.kind.value.upper())
         if content != self.surface.target_content:
             self.surface.set_content(content, fade_duration_ms)
+
+
+class ResponsiveContentTabs(QTabWidget):
+    """Allow the lower workspace to compress without an outer scroll range."""
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
 
 
 class ControllerWindow(QMainWindow):
@@ -108,12 +159,21 @@ class ControllerWindow(QMainWindow):
         previous_unclean_exit: bool = False,
         video_backend_factory: Callable[[], MediaPlaybackBackend] | None = None,
         audio_backend: MediaPlaybackBackend | None = None,
+        theme_manager: ThemeManager | None = None,
     ) -> None:
         super().__init__()
+        self.setDockOptions(
+            self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks
+        )
+        self.setObjectName("ControllerWindow")
         self.application = application
         self.screen_service = screen_service
         self.settings_service = settings_service
         self.settings = settings
+        self.theme_manager = theme_manager or ThemeManager()
+        if not self.theme_manager.current_theme_id():
+            applied_theme = self.theme_manager.apply_theme(application, settings.current_theme)
+            self.settings.current_theme = applied_theme or DEFAULT_THEME_ID
         self.preview_presets, self._preview_preset_warning = (
             self.settings_service.load_preview_presets()
         )
@@ -186,8 +246,10 @@ class ControllerWindow(QMainWindow):
         self.broadcast_simulator: SimulationWindow | None = None
         self.venue_simulator: SimulationWindow | None = None
         self._closing = False
+        self._ui_density = ""
         self.setWindowTitle("Church Presenter")
-        self.resize(1280, 920)
+        self.setMinimumSize(CONTROLLER_MINIMUM_SIZE)
+        self.resize(CONTROLLER_DEFAULT_SIZE)
         if settings.controller_geometry:
             try:
                 self.restoreGeometry(
@@ -221,53 +283,109 @@ class ControllerWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.root_scroll = QScrollArea()
+        self.root_scroll.setObjectName("ControllerScroll")
         self.root_scroll.setWidgetResizable(True)
         root = QWidget()
         self.root_scroll.setWidget(root)
         self.setCentralWidget(self.root_scroll)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-        top = QHBoxLayout()
-        title = QLabel("Church Presenter · Phase 2")
-        title.setStyleSheet("font-size:22px;font-weight:800;")
+        self.root_layout = layout
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
+
+        header_frame = QFrame()
+        header_frame.setObjectName("AppHeader")
+        top = QGridLayout(header_frame)
+        top.setContentsMargins(16, 10, 16, 10)
+        top.setHorizontalSpacing(16)
+        top.setVerticalSpacing(4)
+        self.header_layout = top
+        self.header_title_widget = QWidget()
+        title_block = QVBoxLayout(self.header_title_widget)
+        title_block.setContentsMargins(0, 0, 0, 0)
+        title_block.setSpacing(2)
+        self.app_title = QLabel("Church Presenter")
+        self.app_title.setProperty("role", "pageTitle")
+        self.byline = QLabel("by Jinsol")
+        self.byline.setProperty("role", "secondary")
         self.screen_status = QLabel("화면 상태 확인 중")
+        self.screen_status.setProperty("role", "secondary")
+        self.title_row = QHBoxLayout()
+        self.title_row.setContentsMargins(0, 0, 0, 0)
+        self.title_row.setSpacing(6)
+        self.title_row.addWidget(self.app_title)
+        self.title_row.addWidget(self.byline)
+        self.title_row.addStretch()
+        title_block.addLayout(self.title_row)
+        title_block.addWidget(self.screen_status)
+
         self.status = QLabel("준비됨 · 모든 Live는 BLACK")
         self.status.setWordWrap(False)
         settings_button = QPushButton("화면 / 오디오 설정")
+        settings_button.setProperty("variant", "secondary")
         self.preview_presets_button = QPushButton("예배 순서")
+        self.preview_presets_button.setProperty("variant", "secondary")
         self.start_outputs_button = QPushButton("출력 시작")
+        self.start_outputs_button.setProperty("variant", "primary")
         self.stop_outputs_button = QPushButton("출력 중지")
-        self.start_outputs_button.setStyleSheet("font-weight:800;background:#2563eb;color:white;")
-        for widget in (
-            title,
-            self.screen_status,
+        self.stop_outputs_button.setProperty("variant", "secondary")
+
+        appearance_label = QLabel("테마")
+        appearance_label.setProperty("role", "secondary")
+        self.theme_combo = QComboBox()
+        self.theme_combo.setAccessibleName("애플리케이션 테마")
+        self.theme_combo.setToolTip("Controller UI 테마를 즉시 변경하고 저장합니다.")
+        for theme in self.theme_manager.available_themes():
+            self.theme_combo.addItem(theme.name, theme.id)
+        theme_index = self.theme_combo.findData(self.settings.current_theme)
+        self.theme_combo.setCurrentIndex(max(0, theme_index))
+
+        self.header_actions_widget = QWidget()
+        actions = QGridLayout(self.header_actions_widget)
+        self.header_actions_layout = actions
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        self.header_action_widgets = (
+            appearance_label,
+            self.theme_combo,
             settings_button,
             self.preview_presets_button,
             self.start_outputs_button,
             self.stop_outputs_button,
-        ):
-            top.addWidget(widget)
-        top.addStretch()
-        layout.addLayout(top)
+        )
+        for column, widget in enumerate(self.header_action_widgets):
+            actions.addWidget(widget, 0, column)
+        top.setColumnStretch(0, 1)
+        self._compact_header: bool | None = None
+        self._update_header_layout(self.width())
+        layout.addWidget(header_frame)
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().addWidget(self.status, 1)
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(6)
-        self.broadcast_preview = ChannelMonitor("Broadcast Preview", self.coordinator, False)
-        self.broadcast_live = ChannelMonitor("Broadcast Live", self.coordinator, True)
-        self.venue_preview = ChannelMonitor("Venue Preview", self.coordinator, False)
-        self.venue_live = ChannelMonitor("Venue Live", self.coordinator, True)
-        grid.addWidget(self.broadcast_preview, 0, 0)
-        grid.addWidget(self.broadcast_live, 0, 1)
-        grid.addWidget(self.venue_preview, 1, 0)
-        grid.addWidget(self.venue_live, 1, 1)
-        grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 1)
-        layout.addLayout(grid, 3)
+        self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.workspace_splitter.setObjectName("WorkspaceSplitter")
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setHandleWidth(6)
+        self.monitor_workspace = QWidget()
+        self.monitor_workspace.setObjectName("MonitorWorkspace")
+        self.monitor_workspace_layout = QVBoxLayout(self.monitor_workspace)
+        self.monitor_workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.monitor_workspace_layout.setSpacing(12)
+        self.monitor_grid = QGridLayout()
+        self.monitor_grid.setContentsMargins(0, 0, 0, 0)
+        self.monitor_grid.setHorizontalSpacing(12)
+        self.monitor_grid.setVerticalSpacing(12)
+        self.broadcast_preview = ChannelMonitor("송출", self.coordinator, False)
+        self.broadcast_live = ChannelMonitor("송출", self.coordinator, True)
+        self.venue_preview = ChannelMonitor("현장", self.coordinator, False)
+        self.venue_live = ChannelMonitor("현장", self.coordinator, True)
+        self.monitor_grid.addWidget(self.broadcast_preview, 0, 0)
+        self.monitor_grid.addWidget(self.broadcast_live, 0, 1)
+        self.monitor_grid.addWidget(self.venue_preview, 1, 0)
+        self.monitor_grid.addWidget(self.venue_live, 1, 1)
+        self.monitor_grid.setRowStretch(0, 1)
+        self.monitor_grid.setRowStretch(1, 1)
+        self.monitor_workspace_layout.addLayout(self.monitor_grid, 1)
 
         self.sync_bar = QFrame()
         self.sync_bar.setObjectName("SyncControl")
@@ -277,13 +395,23 @@ class ControllerWindow(QMainWindow):
             "Enter로 TAKE BOTH를 실행합니다."
         )
         sync_layout = QHBoxLayout(self.sync_bar)
-        self.sync_content_check = QCheckBox("자막 + PDF 동시 진행")
+        self.sync_layout = sync_layout
+        sync_layout.setContentsMargins(14, 10, 14, 10)
+        sync_layout.setSpacing(8)
+        sync_title = QLabel("동시 진행")
+        sync_title.setProperty("role", "sectionTitle")
+        self.sync_content_check = QCheckBox("동시 진행")
         self.sync_content_check.setObjectName("SyncContentCheck")
         self.sync_content_check.setChecked(self.settings.subtitle_pdf_linked)
         self.sync_previous_button = QPushButton("◀ 함께 이전")
+        self.sync_previous_button.setProperty("variant", "ghost")
         self.sync_next_button = QPushButton("함께 다음 ▶")
-        self.sync_take_button = QPushButton("TAKE BOTH · 자막 + PDF")
-        self.sync_take_button.setObjectName("DangerButton")
+        self.sync_next_button.setProperty("variant", "ghost")
+        self.sync_take_button = QPushButton("TAKE BOTH")
+        self.sync_take_button.setObjectName("LinkedTakeBoth")
+        self.sync_take_button.setProperty("variant", "take")
+        sync_layout.addWidget(sync_title)
+        sync_layout.addStretch()
         sync_widgets: tuple[QWidget, ...] = (
             self.sync_content_check,
             self.sync_previous_button,
@@ -292,8 +420,8 @@ class ControllerWindow(QMainWindow):
         )
         for sync_widget in sync_widgets:
             sync_layout.addWidget(sync_widget)
-        sync_layout.addStretch()
-        layout.addWidget(self.sync_bar)
+        self.monitor_workspace_layout.addWidget(self.sync_bar)
+        self.workspace_splitter.addWidget(self.monitor_workspace)
 
         presets, default_preset, warning = self.settings_service.load_presets()
         preset_name = (
@@ -304,12 +432,14 @@ class ControllerWindow(QMainWindow):
         self.subtitle_style = presets[preset_name]
         if warning:
             self.status.setText(warning)
-        self.tabs = QTabWidget()
+        self.tabs = ResponsiveContentTabs()
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.subtitle_panel = SubtitlePanel(
             self.subtitle_style,
             self.settings.key_color,
             self.settings.subtitle_group_size,
         )
+        self._apply_subtitle_card_theme()
         pdf_folder = Path(self.settings.pdf_folder) if self.settings.pdf_folder else None
         self.pdf_panel = PdfPanel(
             self.coordinator,
@@ -347,7 +477,30 @@ class ControllerWindow(QMainWindow):
         self.tabs.addTab(self.video_panel, "영상")
         self.tabs.addTab(self.audio_panel, "배경음악")
         self.tabs.addTab(self.black_panel, "검은 화면")
-        layout.addWidget(self.tabs, 2)
+        self.tabs.setMinimumHeight(0)
+        self.pdf_panel.set_compact_actions(self.width() < 1100)
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setObjectName("ContentPanelScroll")
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.content_scroll.setMinimumHeight(170)
+        self.content_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Ignored,
+        )
+        self.content_scroll.setWidget(self.tabs)
+        self.workspace_splitter.addWidget(self.content_scroll)
+        self.workspace_splitter.setStretchFactor(0, 3)
+        self.workspace_splitter.setStretchFactor(1, 2)
+        self._workspace_splitter_user_adjusted = False
+        self._workspace_splitter_state_restored = False
+        self.workspace_splitter.splitterMoved.connect(
+            self._workspace_splitter_moved
+        )
+        layout.addWidget(self.workspace_splitter, 1)
 
         self.preview_preset_panel = PreviewPresetPanel(self.preview_presets)
         self.preview_preset_panel.set_file_path(
@@ -364,11 +517,161 @@ class ControllerWindow(QMainWindow):
         )
         self.preview_preset_dock.setWidget(self.preview_preset_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_preset_dock)
+        self.preview_preset_dock.visibilityChanged.connect(self._schedule_scroll_fit)
 
         settings_button.clicked.connect(self.open_screen_settings)
         self.preview_presets_button.clicked.connect(self._show_preview_preset_panel)
         self.start_outputs_button.clicked.connect(self.start_outputs)
         self.stop_outputs_button.clicked.connect(self.stop_outputs)
+        self.theme_combo.currentIndexChanged.connect(self._theme_selected)
+
+    def _schedule_scroll_fit(self, _visible: bool) -> None:
+        """Settle dock-driven central geometry within the same event-loop cycle."""
+        QTimer.singleShot(0, self._fit_scroll_content)
+
+    def _fit_scroll_content(self) -> None:
+        root = self.root_scroll.widget()
+        if root is None:
+            return
+        minimum = root.minimumSizeHint()
+        viewport = self.root_scroll.viewport().size()
+        root.resize(
+            max(minimum.width(), viewport.width()),
+            max(minimum.height(), viewport.height()),
+        )
+        self.root_layout.activate()
+
+    def _workspace_splitter_moved(self, _position: int, _index: int) -> None:
+        """Remember that the operator intentionally changed the workspace ratio."""
+        self._workspace_splitter_user_adjusted = True
+
+    def _apply_default_workspace_split(self) -> None:
+        """Give output monitoring priority until the operator moves the splitter."""
+        if (
+            self._workspace_splitter_user_adjusted
+            or self._workspace_splitter_state_restored
+        ):
+            return
+        total = self.workspace_splitter.height()
+        if total <= 0:
+            return
+        lower_minimum = 190 if self._ui_density == "compact" else 260
+        upper = max(300, round(total * 0.60))
+        lower = max(lower_minimum, total - upper)
+        upper = max(0, total - lower)
+        self.workspace_splitter.blockSignals(True)
+        self.workspace_splitter.setSizes([upper, lower])
+        self.workspace_splitter.blockSignals(False)
+
+    def _apply_ui_density(self, size: QSize) -> None:
+        """Automatically switch Controller chrome between normal and compact density."""
+        compact = (
+            size.width() < COMPACT_DENSITY_WIDTH
+            or size.height() <= COMPACT_DENSITY_HEIGHT
+        )
+        density = "compact" if compact else "normal"
+        if density == self._ui_density:
+            return
+        self._ui_density = density
+        self.setProperty("uiDensity", density)
+        if compact:
+            self.root_layout.setContentsMargins(8, 8, 8, 6)
+            self.root_layout.setSpacing(8)
+            self.monitor_workspace_layout.setSpacing(8)
+            self.monitor_grid.setHorizontalSpacing(8)
+            self.monitor_grid.setVerticalSpacing(8)
+            self.sync_layout.setContentsMargins(8, 4, 8, 4)
+            self.content_scroll.setMinimumHeight(170)
+        else:
+            self.root_layout.setContentsMargins(16, 16, 16, 12)
+            self.root_layout.setSpacing(12)
+            self.monitor_workspace_layout.setSpacing(12)
+            self.monitor_grid.setHorizontalSpacing(12)
+            self.monitor_grid.setVerticalSpacing(12)
+            self.sync_layout.setContentsMargins(14, 10, 14, 10)
+            self.content_scroll.setMinimumHeight(220)
+        for monitor in (
+            self.broadcast_preview,
+            self.broadcast_live,
+            self.venue_preview,
+            self.venue_live,
+        ):
+            monitor.set_compact(compact)
+        self.pdf_panel.set_compact_mode(compact)
+        self.video_panel.set_compact_mode(compact)
+        widgets = (self, *self.findChildren(QWidget))
+        for widget in widgets:
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.updateGeometry()
+        self.root_layout.invalidate()
+        QTimer.singleShot(0, self._apply_default_workspace_split)
+        QTimer.singleShot(0, self._fit_scroll_content)
+
+    def _update_header_layout(self, width: int) -> None:
+        """Use one FHD row or two compact rows without duplicating controls."""
+        compact = width < COMPACT_HEADER_WIDTH
+        if compact != self._compact_header:
+            self._compact_header = compact
+            self.header_layout.removeWidget(self.header_title_widget)
+            self.header_layout.removeWidget(self.header_actions_widget)
+            for widget in self.header_action_widgets:
+                self.header_actions_layout.removeWidget(widget)
+            if compact:
+                for index, compact_widget in enumerate(self.header_action_widgets):
+                    self.header_actions_layout.addWidget(
+                        compact_widget,
+                        index // 3,
+                        index % 3,
+                    )
+                self.header_layout.addWidget(self.header_title_widget, 0, 0, 1, 2)
+                self.header_layout.addWidget(self.header_actions_widget, 1, 0, 1, 2)
+            else:
+                for column, regular_widget in enumerate(self.header_action_widgets):
+                    self.header_actions_layout.addWidget(regular_widget, 0, column)
+                self.header_layout.addWidget(self.header_title_widget, 0, 0)
+                self.header_layout.addWidget(self.header_actions_widget, 0, 1)
+
+    def _theme_selected(self, index: int) -> None:
+        """Apply and persist a theme without changing presentation state."""
+        theme_id = self.theme_combo.itemData(index)
+        if not isinstance(theme_id, str) or not theme_id:
+            return
+        applied = self.theme_manager.apply_theme(self.application, theme_id)
+        if not applied:
+            self.status.setText(self.theme_manager.last_warning)
+            return
+        self._apply_subtitle_card_theme()
+        self.settings.current_theme = applied
+        if applied != theme_id:
+            fallback_index = self.theme_combo.findData(applied)
+            if fallback_index >= 0:
+                self.theme_combo.blockSignals(True)
+                self.theme_combo.setCurrentIndex(fallback_index)
+                self.theme_combo.blockSignals(False)
+        try:
+            self.settings_service.save(self.settings)
+        except OSError as error:
+            LOGGER.exception("Could not persist selected theme")
+            self.status.setText(f"테마는 적용했지만 설정을 저장하지 못했습니다: {error}")
+            return
+        self.status.setText(
+            self.theme_manager.last_warning or f"테마 적용 완료 · {self.theme_combo.currentText()}"
+        )
+
+    def _apply_subtitle_card_theme(self) -> None:
+        """Keep item-level brushes aligned with the active JSON theme."""
+        self.subtitle_panel.set_card_theme(
+            live_background=str(self.theme_manager.current_value("colors", "live")),
+            preview_background=str(
+                self.theme_manager.current_value("colors", "accent")
+            ),
+            text=str(self.theme_manager.current_value("colors", "text_primary")),
+            active_text=str(
+                self.theme_manager.current_value("colors", "text_on_accent")
+            ),
+        )
 
     def _connect_signals(self) -> None:
         self.subtitle_panel.preview_requested.connect(
@@ -383,7 +686,6 @@ class ControllerWindow(QMainWindow):
         self.pdf_panel.take_requested.connect(self.take)
         self.pdf_panel.take_both_requested.connect(self.take_both)
         self.pdf_panel.link_mode_changed.connect(self._pdf_link_mode_changed)
-        self.pdf_panel.page_order_changed.connect(self._pdf_page_order_changed)
         self.pdf_panel.folder_changed.connect(self._pdf_folder_changed)
         self.pdf_panel.selection_changed.connect(self._pdf_selection_changed)
         self.black_panel.preview_requested.connect(
@@ -451,9 +753,22 @@ class ControllerWindow(QMainWindow):
             prefix, index_text = self.settings.panel_layout.split(":", maxsplit=1)
             index = int(index_text)
         except (ValueError, AttributeError):
-            return
+            prefix = ""
+            index = -1
         if prefix == "tabs" and 0 <= index < self.tabs.count():
             self.tabs.setCurrentIndex(index)
+        if self.settings.workspace_splitter_state:
+            try:
+                restored = self.workspace_splitter.restoreState(
+                    QByteArray.fromBase64(
+                        self.settings.workspace_splitter_state.encode("ascii")
+                    )
+                )
+            except (ValueError, UnicodeError):
+                restored = False
+            self._workspace_splitter_state_restored = restored
+        if not self._workspace_splitter_state_restored:
+            QTimer.singleShot(0, self._apply_default_workspace_split)
 
     @staticmethod
     def _normalize_role(role: ChannelRole | str) -> ChannelRole:
@@ -470,7 +785,7 @@ class ControllerWindow(QMainWindow):
         if content.kind is not ContentType.VIDEO:
             self.video_panel.invalidate_preview(role)
         if not ready:
-            self.status.setText(f"{role.value.title()} Preview 준비 중 · 기존 Live 유지")
+            self.status.setText(f"{channel_label(role)} Preview 준비 중 · 기존 Live 유지")
         self._refresh_channel(role)
 
     def mark_preview_ready(
@@ -482,9 +797,9 @@ class ControllerWindow(QMainWindow):
         role = self._normalize_role(role)
         self.state.mark_preview_ready(role, ready, error)
         self.status.setText(
-            f"{role.value.title()} Preview 준비 완료"
+            f"{channel_label(role)} Preview 준비 완료"
             if ready
-            else f"{role.value.title()} Preview 오류: {error}"
+            else f"{channel_label(role)} Preview 오류: {error}"
         )
         self._refresh_channel(role)
 
@@ -810,7 +1125,7 @@ class ControllerWindow(QMainWindow):
             (ChannelRole.BROADCAST, preset.broadcast_content),
             (ChannelRole.VENUE, preset.venue_content),
         ):
-            label = role.value.title()
+            label = channel_label(role)
             if cue.kind is ContentType.BLACK:
                 resolved[role] = Content.black()
                 continue
@@ -878,7 +1193,7 @@ class ControllerWindow(QMainWindow):
 
     def send_to_both(self, content: Content, ready: bool) -> None:
         if content.kind is ContentType.SUBTITLE_KEY:
-            self.status.setText("자막은 Broadcast 전용입니다.")
+            self.status.setText("자막은 송출 전용입니다.")
             return
         if content.kind is not ContentType.VIDEO:
             self.video_panel.invalidate_preview(ChannelRole.BROADCAST)
@@ -948,7 +1263,7 @@ class ControllerWindow(QMainWindow):
             )
         self._push_live(role)
         self._refresh_channel(role)
-        self.status.setText(f"{role.value.title()} TAKE 완료")
+        self.status.setText(f"{channel_label(role)} TAKE 완료")
         return True
 
     def take_both(self) -> bool:
@@ -1016,9 +1331,7 @@ class ControllerWindow(QMainWindow):
 
     def _linked_navigation_toggled(self, enabled: bool) -> None:
         self.settings.subtitle_pdf_linked = enabled
-        self.sync_content_check.setText(
-            "☑ 자막 + PDF 동시 진행 · 켜짐" if enabled else "☐ 자막 + PDF 동시 진행 · 꺼짐"
-        )
+        self.sync_content_check.setText("동시 진행")
         if enabled:
             self.settings.pdf_link_outputs = False
             if self.pdf_panel.link_outputs:
@@ -1047,7 +1360,7 @@ class ControllerWindow(QMainWindow):
         if pdf_roles:
             self.pdf_panel.move_preview_for_roles(offset, pdf_roles)
         if not subtitle_active and not pdf_roles:
-            self.status.setText("함께 이동할 자막 또는 PDF가 Broadcast/Venue Preview에 없습니다.")
+            self.status.setText("함께 이동할 자막 또는 PDF가 송출/현장 Preview에 없습니다.")
             return
         self._show_linked_position()
 
@@ -1112,7 +1425,7 @@ class ControllerWindow(QMainWindow):
         self.settings.current_style_preset = dialog.result_preset
         self.subtitle_panel.set_style(dialog.result_style, dialog.result_key_color)
         self.status.setText(
-            "자막 스타일을 Broadcast Preview에 적용했습니다. Live는 변경되지 않았습니다."
+            "자막 스타일을 송출 Preview에 적용했습니다. Live는 변경되지 않았습니다."
         )
 
     def open_screen_settings(self) -> None:
@@ -1237,28 +1550,23 @@ class ControllerWindow(QMainWindow):
             max(available.x(), min(self.x(), maximum_x)),
             max(available.y(), min(self.y(), maximum_y)),
         )
+        self._apply_ui_density(self.size())
+        QTimer.singleShot(0, self._apply_default_workspace_split)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """Keep the main controls usable when the Controller becomes narrow."""
         super().resizeEvent(event)
-        if not hasattr(self, "preview_preset_dock"):
-            return
-        if event.size().width() < 1100 and not self.preview_preset_dock.isFloating():
-            self.preview_preset_dock.hide()
-        elif event.size().width() >= 1100 and not self.preview_preset_dock.isVisible():
-            self.preview_preset_dock.setFloating(False)
-            self.addDockWidget(
-                Qt.DockWidgetArea.RightDockWidgetArea,
-                self.preview_preset_dock,
-            )
-            self.preview_preset_dock.show()
+        if hasattr(self, "header_layout"):
+            self._update_header_layout(event.size().width())
+        if hasattr(self, "workspace_splitter"):
+            self._apply_ui_density(event.size())
+        if hasattr(self, "pdf_panel"):
+            self.pdf_panel.set_compact_actions(self._ui_density == "compact")
+            QTimer.singleShot(0, self._fit_scroll_content)
 
     def _show_preview_preset_panel(self) -> None:
-        """Show the preset panel docked, or floating when horizontal space is tight."""
-        if self.width() < 1100:
-            self.preview_preset_dock.setFloating(True)
-        else:
-            self.preview_preset_dock.setFloating(False)
+        """Show the preset panel without changing the operator's dock choice."""
+        if not self.preview_preset_dock.isFloating():
             self.addDockWidget(
                 Qt.DockWidgetArea.RightDockWidgetArea,
                 self.preview_preset_dock,
@@ -1280,7 +1588,7 @@ class ControllerWindow(QMainWindow):
                 self.broadcast_simulator.set_content(self.state.broadcast.live_content)
                 self.broadcast_simulator.show()
             else:
-                self._disconnect_role(ChannelRole.BROADCAST, "가상 Broadcast 화면 연결 해제")
+                self._disconnect_role(ChannelRole.BROADCAST, "가상 송출 화면 연결 해제")
             if self.settings.simulation_venue_connected:
                 self.venue_simulator = SimulationWindow(
                     ChannelRole.VENUE,
@@ -1291,7 +1599,7 @@ class ControllerWindow(QMainWindow):
                 self.venue_simulator.set_content(self.state.venue.live_content)
                 self.venue_simulator.show()
             else:
-                self._disconnect_role(ChannelRole.VENUE, "가상 Venue 화면 연결 해제")
+                self._disconnect_role(ChannelRole.VENUE, "가상 현장 화면 연결 해제")
             self.status.setText("Simulation Outputs 시작됨")
             self._restore_live_video_frames()
             return True
@@ -1343,7 +1651,7 @@ class ControllerWindow(QMainWindow):
         if all(is_active(role) for role in roles):
             return True
         if not self.start_outputs() or not all(is_active(role) for role in roles):
-            labels = ", ".join(role.value.title() for role in roles)
+            labels = ", ".join(channel_label(role) for role in roles)
             self.status.setText(
                 f"TAKE 실패 · {labels} 실제 출력 창을 시작할 수 없습니다. 기존 Live 유지"
             )
@@ -1408,9 +1716,9 @@ class ControllerWindow(QMainWindow):
     def _screens_changed(self) -> None:
         ids = {screen.id for screen in self.screen_service.screens()}
         if self.broadcast_output is not None and self.settings.broadcast_screen_id not in ids:
-            self._disconnect_role(ChannelRole.BROADCAST, "Broadcast 출력 화면이 분리되었습니다.")
+            self._disconnect_role(ChannelRole.BROADCAST, "송출 화면이 분리되었습니다.")
         if self.venue_output is not None and self.settings.venue_screen_id not in ids:
-            self._disconnect_role(ChannelRole.VENUE, "Venue 출력 화면이 분리되었습니다.")
+            self._disconnect_role(ChannelRole.VENUE, "현장 화면이 분리되었습니다.")
         self._update_screen_status()
 
     def _disconnect_role(self, role: ChannelRole, message: str) -> None:
@@ -1449,13 +1757,6 @@ class ControllerWindow(QMainWindow):
     def _pdf_selection_changed(self, path: str, page: int) -> None:
         self.settings.last_pdf_file = path
         self.settings.last_pdf_page = page
-
-    def _pdf_page_order_changed(self, path: str, order: object) -> None:
-        if not isinstance(order, list):
-            return
-        normalized = [page for page in order if isinstance(page, int)]
-        if len(normalized) == len(order):
-            self.settings.pdf_page_orders[path] = normalized
 
     def _video_folder_changed(self, folder: str) -> None:
         self.settings.video_folder = folder
@@ -1540,9 +1841,9 @@ class ControllerWindow(QMainWindow):
     def _video_play_started(self, role: ChannelRole | str) -> None:
         role = self._normalize_role(role)
         target = (
-            "Broadcast + Venue 영상 재생"
+            "송출 + 현장 영상 재생"
             if self.video_manager.is_live_transport_linked
-            else f"{role.value.title()} 영상 재생"
+            else f"{channel_label(role)} 영상 재생"
         )
         if self.audio_controller.pause_for_video():
             self.status.setText(f"{target} · 배경음악을 자동 일시정지했습니다.")
@@ -1725,6 +2026,8 @@ class ControllerWindow(QMainWindow):
         current_audio = self.audio_controller.playlist.current_item
         self.settings.last_audio_file = str(current_audio.path) if current_audio else ""
         self.settings.panel_layout = f"tabs:{self.tabs.currentIndex()}"
+        splitter_data = self.workspace_splitter.saveState().toBase64().data()
+        self.settings.workspace_splitter_state = bytes(splitter_data).decode("ascii")
         geometry_data = self.saveGeometry().toBase64().data()
         self.settings.controller_geometry = bytes(geometry_data).decode("ascii")
         self.settings_service.save(self.settings)

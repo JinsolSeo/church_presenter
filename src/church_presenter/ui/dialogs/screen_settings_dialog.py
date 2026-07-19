@@ -41,7 +41,7 @@ class ScreenSettingsDialog(QDialog):
                 "감지된 화면이 3개 미만입니다. 한 모니터 개발에는 Simulation Mode를 권장합니다."
             )
             note.setWordWrap(True)
-            note.setStyleSheet("color: #b45309; font-weight: 700;")
+            note.setProperty("role", "warning")
             layout.addWidget(note)
         form = QFormLayout()
         self.controller_combo = QComboBox()
@@ -55,8 +55,8 @@ class ScreenSettingsDialog(QDialog):
         self._select(self.broadcast_combo, settings.broadcast_screen_id)
         self._select(self.venue_combo, settings.venue_screen_id)
         form.addRow("Controller Screen", self.controller_combo)
-        form.addRow("Broadcast Screen", self.broadcast_combo)
-        form.addRow("Venue Screen", self.venue_combo)
+        form.addRow("송출 화면", self.broadcast_combo)
+        form.addRow("현장 화면", self.venue_combo)
 
         self.audio_output_combo = QComboBox()
         default_label = "시스템 기본 출력"
@@ -94,9 +94,9 @@ class ScreenSettingsDialog(QDialog):
         self.dpr_spin.setSingleStep(0.25)
         self.dpr_spin.setValue(settings.simulation_dpr)
         form.addRow("Virtual DPR", self.dpr_spin)
-        self.broadcast_connected = QCheckBox("Broadcast virtual screen connected")
+        self.broadcast_connected = QCheckBox("가상 송출 화면 연결됨")
         self.broadcast_connected.setChecked(settings.simulation_broadcast_connected)
-        self.venue_connected = QCheckBox("Venue virtual screen connected")
+        self.venue_connected = QCheckBox("가상 현장 화면 연결됨")
         self.venue_connected.setChecked(settings.simulation_venue_connected)
         form.addRow(self.broadcast_connected)
         form.addRow(self.venue_connected)

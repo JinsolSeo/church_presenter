@@ -46,15 +46,10 @@ class PreviewPresetPanel(QWidget):
         root.setSpacing(8)
 
         title = QLabel("예배 순서 Preview")
-        title.setStyleSheet("font-size:16px;font-weight:800;")
-        description = QLabel(
-            "버튼은 두 Preview만 준비하고 중앙 동시 제어 영역으로 이동합니다."
-        )
-        description.setWordWrap(True)
+        title.setProperty("role", "sectionTitle")
         root.addWidget(title)
-        root.addWidget(description)
 
-        self.file_label = QLabel("임시 작업 목록 · JSON 저장은 다른 이름")
+        self.file_label = QLabel("미저장")
         self.file_label.setObjectName("PreviewPresetFileLabel")
         self.file_label.setWordWrap(True)
         file_row = QHBoxLayout()
@@ -75,6 +70,7 @@ class PreviewPresetPanel(QWidget):
         self.name_edit.setMaxLength(80)
         self.save_button = QPushButton("현재 Preview 저장")
         self.save_button.setObjectName("SavePreviewPreset")
+        self.save_button.setProperty("variant", "primary")
         save_row.addWidget(self.name_edit, 1)
         save_row.addWidget(self.save_button)
         root.addLayout(save_row)
@@ -125,7 +121,7 @@ class PreviewPresetPanel(QWidget):
         layout.setSpacing(4)
         apply_button = QPushButton(f"{index + 1}. {preset.name}")
         apply_button.setObjectName("ApplyPreviewPreset")
-        apply_button.setToolTip("Broadcast와 Venue Preview에 적용")
+        apply_button.setToolTip("송출과 현장 Preview에 적용")
         apply_button.setMinimumHeight(36)
         apply_button.setCheckable(True)
         apply_button.setChecked(preset.name == self.applied_name)
@@ -135,8 +131,8 @@ class PreviewPresetPanel(QWidget):
         self.preset_buttons[preset.name] = apply_button
         layout.addWidget(apply_button)
         summary = QLabel(
-            f"B · {self._content_label(preset.broadcast_content)}\n"
-            f"V · {self._content_label(preset.venue_content)}"
+            f"송출 · {self._content_label(preset.broadcast_content)}\n"
+            f"현장 · {self._content_label(preset.venue_content)}"
         )
         summary.setWordWrap(True)
         layout.addWidget(summary)
@@ -146,8 +142,9 @@ class PreviewPresetPanel(QWidget):
         update = QPushButton("저장")
         rename = QPushButton("이름 변경")
         delete = QPushButton("삭제")
+        delete.setProperty("variant", "danger")
         update.setObjectName("UpdatePreviewPreset")
-        update.setToolTip("현재 Broadcast/Venue Preview 위치로 이 항목을 덮어쓰기")
+        update.setToolTip("현재 송출/현장 Preview 위치로 이 항목을 덮어쓰기")
         self.update_buttons[preset.name] = update
         up.setEnabled(index > 0)
         down.setEnabled(index + 1 < len(self.presets))
@@ -183,13 +180,8 @@ class PreviewPresetPanel(QWidget):
         self.name_edit.clear()
 
     def set_file_path(self, path: str) -> None:
-        """Show the active worship-order document path."""
-        label = (
-            f"기준 파일 · {Path(path).name} · JSON 저장은 다른 이름"
-            if path
-            else "임시 작업 목록 · JSON 저장은 다른 이름"
-        )
-        self.file_label.setText(label)
+        """Show only the active worship-order JSON filename."""
+        self.file_label.setText(Path(path).name if path else "미저장")
         self.file_label.setToolTip(path)
 
     def mark_applied(self, name: str) -> None:

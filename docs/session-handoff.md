@@ -220,50 +220,23 @@ expected preview_index == 1, actual preview_index == 0
 - `ui/styles.py`의 `QCheckBox#SyncContentCheck`
 - `test_sync_checkbox_has_explicit_on_off_label`
 
-### 8. PDF 썸네일 드래그가 재정렬이 아니었던 문제
+### 8. PDF 썸네일 정렬 정책
 
-증상:
-
-- PDF 패널에 드롭 기능은 있었지만 외부 PDF 파일 추가만 처리했다.
-- 썸네일을 내부에서 드래그해도 안정적인 페이지 순서 변경 모델이 없었다.
-
-원인:
-
-- `QListWidget`에 `InternalMove`가 설정되지 않았다.
-- 원본 페이지 번호와 화면 행 번호를 같은 값으로 취급할 위험이 있었다.
-
-최종 해결:
-
-- 썸네일 목록에 `InternalMove`, `MoveAction`, drop indicator를 설정했다.
-- 각 항목의 `Qt.UserRole`에 원본 PDF 페이지 번호를 저장한다.
-- `rowsMoved` 후 항목의 UserRole을 읽어 `page_order`를 다시 계산한다.
-- `AppSettings.pdf_page_orders`에 PDF별 순서를 저장하고 다음 실행에 복원한다.
-- 원본 PDF 파일은 수정하지 않는다.
-
-재정렬 후 반드시 지켜야 하는 점:
-
-- 행 번호를 원본 페이지 번호로 사용하지 않는다.
-- 비동기 썸네일 완료 시 `item(page)`를 호출하지 않고 UserRole로 원본 페이지 항목을
-  찾는다. 현재 `_item_for_page()`가 이 역할을 한다.
-- Left/Right/Home/End는 원본 번호가 아니라 `page_order`를 따라야 한다.
-- 화면 라벨에는 원본 PDF 페이지와 재생 순서를 모두 표시한다.
-
-관련 테스트:
-
-- `test_pdf_panel_loads_thumbnails_and_emits_preview`
-- PDF 목록의 `InternalMove`, `rowsMoved`, 저장 순서 복원 검증
-
-현재 한계:
-
-- PDF 페이지 순서는 resolve된 파일 경로를 키로 저장한다. PDF를 이동하거나 이름을
-  바꾸면 새로운 문서로 인식하고 기본 순서로 시작한다.
+- 썸네일은 `Static`, 좌→우 흐름, 줄바꿈 그리드로 표시한다.
+- 페이지 순서는 항상 원본 PDF의 1쪽부터 오름차순이다.
+- 내부 드래그 앤 드롭은 비활성화한다.
+- 이전 설정의 `pdf_page_orders` 값은 호환성을 위해 읽을 수 있지만 화면에는 적용하지
+  않는다.
+- 비동기 썸네일 완료 시 `_item_for_page()`가 UserRole의 원본 페이지 번호로 항목을
+  찾아 갱신한다.
 
 ### 9. PDF 양쪽 송출 때 Send to Both를 매번 눌러야 했던 문제
 
 최종 해결:
 
-- PDF 패널에 `Broadcast + Venue 계속 연동` 체크박스를 추가했다.
-- 활성화 중 페이지를 선택하거나 이동하면 두 Preview를 자동으로 준비한다.
+- PDF 패널에 Venue와 Broadcast 대상 체크박스를 각각 표시한다.
+- 두 체크박스를 모두 켠 상태에서 페이지를 선택하거나 이동하면 두 Preview를 자동으로
+  준비한다.
 - `pdf_link_outputs` 설정으로 다음 실행에 복원한다.
 - PDF 양쪽 연동과 자막+PDF 동시 진행은 서로 다른 운용 모드이므로 한쪽을 켜면
   다른 쪽을 끈다.

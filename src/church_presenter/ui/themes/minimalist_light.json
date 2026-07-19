@@ -1,0 +1,16 @@
+{
+  "meta": {"id": "minimalist_light", "name": "Minimalist Light", "mode": "light", "version": 1},
+  "colors": {
+    "window_bg": "#FFFFFF", "surface": "#FFFFFF", "surface_alt": "#F7F8FA", "surface_hover": "#F0F2F5",
+    "border": "#D9DDE3", "border_strong": "#AEB4BD", "text_primary": "#111827", "text_secondary": "#667085",
+    "text_disabled": "#A4AAB3", "text_on_accent": "#FFFFFF", "accent": "#1976D2", "accent_hover": "#1565C0",
+    "accent_pressed": "#0D47A1", "accent_soft": "#E8F1FB", "preview": "#1976D2", "preview_soft": "#E8F1FB",
+    "live": "#C62828", "live_hover": "#B71C1C", "live_pressed": "#8E1717", "live_soft": "#FBE9E7",
+    "success": "#2E7D32", "warning": "#AF6200", "danger": "#C62828", "selection": "#E2EEFB",
+    "focus": "#1976D2", "disabled_bg": "#F0F1F3", "slider_groove": "#CDD3DA", "slider_handle": "#FFFFFF",
+    "scrollbar_handle": "#B4BAC2"
+  },
+  "metrics": {"control_height": 34, "button_height": 34, "take_button_height": 44, "radius": 5, "panel_radius": 7, "border_width": 1, "monitor_border_width": 3, "icon_size": 16, "scrollbar_width": 9, "compact_control_height": 28, "compact_button_height": 28, "compact_take_button_height": 36, "compact_scrollbar_width": 8},
+  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "compact_xs": 3, "compact_sm": 5, "compact_md": 8},
+  "typography": {"font_family": "", "font_size": 13, "caption_size": 11, "section_title_size": 15, "monitor_title_size": 14, "take_button_size": 15, "page_title_size": 19, "compact_font_size": 11, "compact_caption_size": 10, "compact_section_title_size": 13, "compact_monitor_title_size": 12, "compact_take_button_size": 13, "compact_page_title_size": 17}
+}

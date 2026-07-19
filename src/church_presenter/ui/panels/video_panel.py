@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -26,6 +26,7 @@ from church_presenter.domain.enums import ChannelRole, MediaType, PlaybackStatus
 from church_presenter.domain.models import Content, FileItem, VideoPlaybackRuntimeState
 from church_presenter.media.video_manager import VideoPlaybackManager
 from church_presenter.services.media_library_service import MediaLibraryCoordinator
+from church_presenter.ui.labels import channel_label
 
 
 def format_media_time(milliseconds: int) -> str:
@@ -68,6 +69,7 @@ class VideoPanel(QWidget):
             ChannelRole.BROADCAST: False,
             ChannelRole.VENUE: False,
         }
+        self._compact_mode = False
         self.library = MediaLibraryCoordinator()
         self.library.scanned.connect(self._scan_finished)
         self.setAcceptDrops(True)
@@ -81,7 +83,9 @@ class VideoPanel(QWidget):
 
     def _build_ui(self, volume: int, muted: bool, fade_duration_ms: int) -> None:
         layout = QVBoxLayout(self)
+        self.root_layout = layout
         toolbar = QHBoxLayout()
+        self.toolbar_layout = toolbar
         folder_button = QPushButton("영상 폴더")
         self.folder_label = QLabel(str(self.folder or "선택되지 않음"))
         self.folder_label.setMinimumWidth(0)
@@ -109,8 +113,10 @@ class VideoPanel(QWidget):
         layout.addLayout(toolbar)
 
         content_layout = QHBoxLayout()
+        self.content_layout = content_layout
         content_layout.setSpacing(10)
         library_layout = QVBoxLayout()
+        self.library_layout = library_layout
         library_layout.setContentsMargins(0, 0, 0, 0)
         library_layout.setSpacing(6)
         self.file_list = QListWidget()
@@ -130,18 +136,21 @@ class VideoPanel(QWidget):
             QSizePolicy.Policy.Expanding,
         )
         controls = QGridLayout(self.control_panel)
+        self.controls_layout = controls
         controls.setContentsMargins(8, 8, 8, 8)
         controls.setHorizontalSpacing(6)
         controls.setVerticalSpacing(6)
 
         self.target_combo = QComboBox()
-        self.target_combo.addItem("Broadcast", ChannelRole.BROADCAST.value)
-        self.target_combo.addItem("Venue", ChannelRole.VENUE.value)
+        self.target_combo.addItem("송출", ChannelRole.BROADCAST.value)
+        self.target_combo.addItem("현장", ChannelRole.VENUE.value)
         cue_button = QPushButton("선택 채널 Preview Cue")
+        cue_button.setProperty("variant", "primary")
         both_button = QPushButton("Send to Both")
         self.take_button = QPushButton("TAKE")
         self.take_both_button = QPushButton("TAKE BOTH")
-        self.take_both_button.setObjectName("DangerButton")
+        self.take_button.setProperty("variant", "take")
+        self.take_both_button.setProperty("variant", "take")
         self.take_button.setEnabled(False)
         self.take_both_button.setEnabled(False)
         self.play_button = QPushButton("Play")
@@ -208,6 +217,24 @@ class VideoPanel(QWidget):
         self.manager.runtime_changed.connect(self._runtime_changed)
         self._target_changed()
 
+    def set_compact_mode(self, compact: bool) -> None:
+        """Reduce video-panel chrome for laptop-sized Controller windows."""
+        if compact == self._compact_mode:
+            return
+        self._compact_mode = compact
+        root_margins = (6, 6, 6, 6) if compact else (9, 9, 9, 9)
+        control_margins = (6, 6, 6, 6) if compact else (8, 8, 8, 8)
+        self.root_layout.setContentsMargins(*root_margins)
+        self.root_layout.setSpacing(6 if compact else 9)
+        self.toolbar_layout.setSpacing(6 if compact else 9)
+        self.content_layout.setSpacing(6 if compact else 10)
+        self.library_layout.setSpacing(4 if compact else 6)
+        self.controls_layout.setContentsMargins(*control_margins)
+        self.controls_layout.setHorizontalSpacing(4 if compact else 6)
+        self.controls_layout.setVerticalSpacing(4 if compact else 6)
+        self.file_list.setIconSize(QSize(128, 72) if compact else QSize(160, 90))
+        self.info_label.setVisible(not compact)
+
     def choose_folder(self) -> None:
         selected = QFileDialog.getExistingDirectory(
             self, "영상 폴더 선택", str(self.folder or Path.home())
@@ -234,7 +261,7 @@ class VideoPanel(QWidget):
         self._preview_ready[role] = False
         self._update_take_buttons()
         self.preview_requested.emit(role, content, False)
-        self.status_label.setText(f"{role.value.title()} LOADING")
+        self.status_label.setText(f"{channel_label(role)} LOADING")
         self.manager.cue_preview(role, self.selected_path)
 
     def cue_both(self) -> None:
@@ -245,7 +272,7 @@ class VideoPanel(QWidget):
         self._preview_ready[ChannelRole.VENUE] = False
         self._update_take_buttons()
         self.send_to_both_requested.emit(content, False)
-        self.status_label.setText("Broadcast + Venue LOADING")
+        self.status_label.setText("송출 + 현장 LOADING")
         self.manager.cue_both(self.selected_path)
 
     def preview_result(
@@ -277,9 +304,9 @@ class VideoPanel(QWidget):
         self._preview_ready[role] = not error and not image.isNull()
         self._update_take_buttons()
         self.status_label.setText(
-            f"{role.value.title()} ERROR · {error}"
+            f"{channel_label(role)} ERROR · {error}"
             if error
-            else f"{role.value.title()} CUE · TAKE 후에도 자동 재생하지 않습니다."
+            else f"{channel_label(role)} CUE · TAKE 후에도 자동 재생하지 않습니다."
         )
 
     def invalidate_preview(self, role: ChannelRole) -> None:
@@ -331,7 +358,9 @@ class VideoPanel(QWidget):
             f"{format_media_time(runtime.position_ms)} / {format_media_time(runtime.duration_ms)}"
         )
         suffix = f" · {runtime.error_message}" if runtime.error_message else ""
-        self.status_label.setText(f"{role.value.title()} {runtime.status.value.upper()}{suffix}")
+        self.status_label.setText(
+            f"{channel_label(role)} {runtime.status.value.upper()}{suffix}"
+        )
         self._update_playback_controls(runtime)
 
     def _target_changed(self) -> None:

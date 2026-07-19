@@ -81,7 +81,7 @@ def validate_role_assignment(
     simulation_mode: bool,
 ) -> tuple[bool, str]:
     if not broadcast_screen_id or not venue_screen_id:
-        return False, "방송과 현장 화면을 모두 지정하십시오."
+        return False, "송출과 현장 화면을 모두 지정하십시오."
     if not simulation_mode and broadcast_screen_id == venue_screen_id:
-        return False, "방송과 현장 출력에 같은 물리 화면을 지정할 수 없습니다."
+        return False, "송출과 현장 출력에 같은 물리 화면을 지정할 수 없습니다."
     return True, ""

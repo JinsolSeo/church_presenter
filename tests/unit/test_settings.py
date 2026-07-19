@@ -15,8 +15,10 @@ def test_settings_round_trip(tmp_path: Path) -> None:
         sort_field=SortField.MODIFIED,
         sort_descending=True,
         simulation_mode=True,
+        current_theme="dark_modern",
         simulation_width=1920,
         simulation_height=1080,
+        workspace_splitter_state="c3BsaXR0ZXItc3RhdGU=",
         last_pdf_page=7,
         pdf_page_orders={"/portable/path/service.pdf": [2, 0, 1]},
         pdf_link_outputs=True,
@@ -41,6 +43,17 @@ def test_settings_round_trip(tmp_path: Path) -> None:
     result = service.load()
     assert result.warning == ""
     assert result.settings == settings
+
+
+def test_legacy_settings_without_theme_uses_default(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    service.settings_path.write_text('{"simulation_mode": true}', encoding="utf-8")
+
+    result = service.load()
+
+    assert result.warning == ""
+    assert result.settings.current_theme == "light_professional"
 
 
 def test_corrupt_settings_are_backed_up(tmp_path: Path) -> None:

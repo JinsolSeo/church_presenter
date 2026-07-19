@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
+import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from church_presenter.domain.enums import ChannelRole, ContentType
@@ -17,7 +19,12 @@ from church_presenter.domain.models import (
 from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.screen_service import MockScreenService
 from church_presenter.services.settings_service import SettingsService
-from church_presenter.ui.controller_window import ControllerWindow
+from church_presenter.ui.controller_window import (
+    CONTROLLER_DEFAULT_SIZE,
+    CONTROLLER_DESIGN_SIZE,
+    CONTROLLER_MINIMUM_SIZE,
+    ControllerWindow,
+)
 from church_presenter.ui.styles import apply_application_style
 
 
@@ -62,6 +69,119 @@ def test_preview_selection_waits_for_take(qtbot, tmp_path: Path) -> None:
     assert window.state.broadcast.live_content == content
     assert window.broadcast_simulator is not None
     assert window.broadcast_simulator.surface.target_content == content
+
+
+def test_theme_switch_is_persisted_without_changing_preview_or_live(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    preview = Content.subtitle("Theme-safe Preview", 0, SubtitleStyle(), "#00FF00")
+    window.set_preview(ChannelRole.BROADCAST, preview)
+    live_before = window.state.broadcast.live_content
+
+    window.theme_combo.setCurrentIndex(window.theme_combo.findData("dark_modern"))
+
+    assert window.settings.current_theme == "dark_modern"
+    assert window.theme_manager.current_theme_id() == "dark_modern"
+    assert window.settings_service.load().settings.current_theme == "dark_modern"
+    assert window.state.broadcast.preview_content == preview
+    assert window.state.broadcast.live_content == live_before
+
+
+@pytest.mark.parametrize(
+    "theme_id",
+    ["light_professional", "dark_modern", "minimalist_light"],
+)
+def test_all_themes_subtitle_cards_use_only_live_and_preview_highlights(
+    qtbot,
+    tmp_path: Path,
+    theme_id: str,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.theme_combo.setCurrentIndex(window.theme_combo.findData(theme_id))
+    panel = window.subtitle_panel
+    panel.document.lines = ["현재 Live", "이전", "현재 Preview", "다음", "일반"]
+    panel.document.group_size = 1
+    panel.live_index = 0
+    panel.preview_index = 2
+    panel._refresh()
+
+    live = panel.card_list.item(0)
+    previous = panel.card_list.item(1)
+    preview = panel.card_list.item(2)
+    next_item = panel.card_list.item(3)
+    normal = panel.card_list.item(4)
+
+    assert panel.card_list.objectName() == "SubtitleCardList"
+    assert live.background().color() == QColor(
+        str(window.theme_manager.current_value("colors", "live"))
+    )
+    assert preview.background().color() == QColor(
+        str(window.theme_manager.current_value("colors", "accent"))
+    )
+    assert previous.background().color().alpha() == 0
+    assert next_item.background().color().alpha() == 0
+    expected_text = QColor(
+        str(window.theme_manager.current_value("colors", "text_primary"))
+    )
+    assert previous.foreground().color() == expected_text
+    assert preview.foreground().color() == QColor(
+        str(window.theme_manager.current_value("colors", "text_on_accent"))
+    )
+    assert next_item.foreground().color() == expected_text
+    assert normal.foreground().color() == expected_text
+    assert live.text().startswith("[LIVE]  ")
+    assert preview.text().startswith("[PREVIEW]  ")
+    assert previous.text() == "이전"
+    assert next_item.text() == "다음"
+    assert normal.text() == "일반"
+
+    panel.live_index = panel.preview_index
+    panel._refresh_labels()
+    combined = panel.card_list.item(panel.preview_index)
+    assert combined.text().startswith("[LIVE + PREVIEW]  ")
+    assert panel.card_list.property("selectedCardLive") is True
+    assert combined.background().color() == QColor(
+        str(window.theme_manager.current_value("colors", "live"))
+    )
+
+
+def test_monitor_semantics_and_take_variants_are_explicit(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+
+    assert window.broadcast_preview.state_label.text() == "PREVIEW"
+    assert window.broadcast_live.state_label.text() == "LIVE"
+    assert window.broadcast_preview.title.text() == "송출"
+    assert window.venue_preview.title.text() == "현장"
+    assert window.broadcast_preview.property("stateRole") == "preview"
+    assert window.broadcast_live.property("stateRole") == "live"
+    assert window.sync_take_button.property("variant") == "take"
+    assert window.pdf_panel.take_button.property("variant") == "take"
+    assert window.pdf_panel.take_both_button.property("variant") == "take"
+    assert window.video_panel.take_button.property("variant") == "take"
+    assert window.video_panel.take_both_button.property("variant") == "take"
+    assert window.video_panel.target_combo.itemText(0) == "송출"
+    assert window.video_panel.target_combo.itemText(1) == "현장"
+
+
+def test_controller_layout_declares_fhd_baseline_and_responsive_minimum(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+
+    assert CONTROLLER_DESIGN_SIZE.width() == 1920
+    assert CONTROLLER_DESIGN_SIZE.height() == 1080
+    assert CONTROLLER_DEFAULT_SIZE.width() == 1600
+    assert CONTROLLER_DEFAULT_SIZE.height() == 900
+    assert window.minimumSize() == CONTROLLER_MINIMUM_SIZE
+    assert window.root_scroll.widgetResizable()
+    assert window.app_title.text() == "Church Presenter"
+    assert "Phase 2" not in window.app_title.text()
+    assert window.byline.text() == "by Jinsol"
+    assert window.title_row.indexOf(window.app_title) == 0
+    assert window.title_row.indexOf(window.byline) == 1
 
 
 def test_named_preview_preset_applies_without_changing_live(qtbot, tmp_path: Path) -> None:
@@ -230,9 +350,7 @@ def test_worship_order_changes_stay_temporary_until_saved_as(qtbot, tmp_path: Pa
 
     assert window.save_preview_preset_file(order_path)
     assert window.preview_preset_file == order_path.resolve()
-    assert window.preview_preset_panel.file_label.text() == (
-        f"기준 파일 · {order_path.name} · JSON 저장은 다른 이름"
-    )
+    assert window.preview_preset_panel.file_label.text() == order_path.name
     assert window.preview_preset_panel.file_label.toolTip() == str(order_path.resolve())
     assert window.settings.preview_preset_file == str(order_path.resolve())
 
@@ -349,10 +467,110 @@ def test_compact_controller_fits_without_vertical_scroll(qtbot, tmp_path: Path) 
 
 def test_controller_gives_more_extra_height_to_monitors(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
-    root_layout = window.root_scroll.widget().layout()
+    window.setFixedSize(1280, 720)
+    qtbot.wait(20)
 
-    assert root_layout.stretch(1) == 3
-    assert root_layout.stretch(3) == 2
+    upper, lower = window.workspace_splitter.sizes()
+    assert upper > lower
+    assert window.broadcast_preview.surface.height() >= 100
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "density", "minimum_surface_height"),
+    [
+        (1920, 1080, "normal", 160),
+        (1600, 900, "compact", 145),
+        (1366, 768, "compact", 110),
+        (1280, 720, "compact", 95),
+        (800, 600, "compact", 36),
+    ],
+)
+def test_controller_preserves_monitoring_area_across_resolutions(
+    qtbot,
+    tmp_path: Path,
+    width: int,
+    height: int,
+    density: str,
+    minimum_surface_height: int,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.tabs.setCurrentWidget(window.video_panel)
+    window.setFixedSize(width, height)
+    qtbot.wait(30)
+
+    assert window.property("uiDensity") == density
+    assert window.root_scroll.verticalScrollBar().maximum() == 0
+    assert window.root_scroll.horizontalScrollBar().maximum() == 0
+    assert window.content_scroll.verticalScrollBar().maximum() == 0
+    assert window.broadcast_preview.surface.height() >= minimum_surface_height
+    assert window.venue_live.surface.height() >= minimum_surface_height
+    assert window.workspace_splitter.sizes()[0] > window.workspace_splitter.sizes()[1]
+    assert window.preview_preset_dock.isVisible()
+    assert not window.preview_preset_dock.isFloating()
+    if density == "compact":
+        assert window.sync_take_button.height() <= 40
+        assert not window.video_panel.info_label.isVisible()
+    else:
+        assert window.sync_take_button.height() >= 44
+
+
+def test_lower_workspace_has_no_outer_scrollbar_on_laptop(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.setFixedSize(1280, 720)
+
+    for index in range(window.tabs.count()):
+        window.tabs.setCurrentIndex(index)
+        qtbot.wait(10)
+        assert window.content_scroll.verticalScrollBar().maximum() == 0
+
+
+def test_worship_order_dock_is_not_hidden_or_floated_on_resize(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.setFixedSize(1000, 720)
+    qtbot.wait(20)
+
+    assert window.preview_preset_dock.isVisible()
+    assert not window.preview_preset_dock.isFloating()
+
+    window.preview_preset_dock.hide()
+    qtbot.mouseClick(window.preview_presets_button, Qt.MouseButton.LeftButton)
+
+    assert window.preview_preset_dock.isVisible()
+    assert not window.preview_preset_dock.isFloating()
+
+
+def test_workspace_splitter_state_is_restored(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.setFixedSize(1280, 720)
+    window.workspace_splitter.setSizes([430, 180])
+    qtbot.wait(20)
+    window._persist_settings()
+    saved_state = window.settings.workspace_splitter_state
+    window.hide()
+
+    application = QApplication.instance()
+    assert isinstance(application, QApplication)
+    screens = MockScreenService(
+        [ScreenInfo("virtual", "CI Virtual", 0, 0, 1280, 720, 1.0, True)]
+    )
+    service = SettingsService(tmp_path / "settings")
+    restored = ControllerWindow(
+        application,
+        screens,  # type: ignore[arg-type]
+        service,
+        service.load().settings,
+    )
+    qtbot.addWidget(restored)
+    restored.setFixedSize(1280, 720)
+    restored.show()
+    qtbot.wait(30)
+
+    assert saved_state
+    assert restored._workspace_splitter_state_restored is True
+    assert restored.workspace_splitter.sizes()[0] > restored.workspace_splitter.sizes()[1]
 
 
 def test_controller_geometry_is_clamped_to_available_screen(qtbot, tmp_path: Path) -> None:
@@ -373,10 +591,10 @@ def test_controller_geometry_is_clamped_to_available_screen(qtbot, tmp_path: Pat
 def test_take_normalizes_string_role_from_qt(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
     assert window.take("broadcast") is True
-    assert "Broadcast TAKE 완료" in window.status.text()
+    assert "송출 TAKE 완료" in window.status.text()
     window.pdf_panel.set_target_role(ChannelRole.VENUE)
     qtbot.mouseClick(window.pdf_panel.take_button, Qt.MouseButton.LeftButton)
-    assert "Venue TAKE 완료" in window.status.text()
+    assert "현장 TAKE 완료" in window.status.text()
 
 
 def test_simulation_mode_uses_real_output_surface(qtbot, tmp_path: Path) -> None:
@@ -508,9 +726,12 @@ def test_linked_navigation_uses_each_preview_content_type(qtbot, tmp_path: Path)
     assert window.state.venue.preview_content.pdf_page == 0
 
 
-def test_sync_checkbox_has_explicit_on_off_label(qtbot, tmp_path: Path) -> None:
+def test_sync_checkbox_uses_one_indicator_and_compact_label(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
     assert window.sync_content_check.objectName() == "SyncContentCheck"
-    assert "꺼짐" in window.sync_content_check.text()
+    assert not hasattr(window, "sync_hint")
+    assert window.sync_content_check.text() == "동시 진행"
+    assert "☐" not in window.sync_content_check.text()
+    assert window.sync_take_button.text() == "TAKE BOTH"
     window.sync_content_check.setChecked(True)
-    assert "켜짐" in window.sync_content_check.text()
+    assert window.sync_content_check.text() == "동시 진행"
