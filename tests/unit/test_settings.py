@@ -125,6 +125,11 @@ def test_worship_order_can_be_saved_and_loaded_as_a_file(tmp_path: Path) -> None
     presets = [
         PreviewPreset("예배 시작", Content.black(), Content.black()),
         PreviewPreset(
+            "크로마키 빈 화면",
+            Content.solid_color("#00FF00"),
+            Content.solid_color("#0000FF"),
+        ),
+        PreviewPreset(
             "찬양",
             Content.subtitle("찬양합니다.", 0, SubtitleStyle(), "#00FF00"),
             Content.black(),

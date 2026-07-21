@@ -38,4 +38,7 @@ class ContentRenderer:
         if content.kind is ContentType.VIDEO:
             draw_contained_image(painter, bounds.toRect(), video_frame)
             return
+        if content.kind is ContentType.SOLID_COLOR:
+            painter.fillRect(bounds, content.background_color)
+            return
         painter.fillRect(bounds, "black")

@@ -62,3 +62,17 @@ def test_black_all_is_shutdown_safe() -> None:
     assert state.broadcast.live_content.kind is ContentType.BLACK
     assert state.venue.preview_content.kind is ContentType.BLACK
     assert state.venue.live_content.kind is ContentType.BLACK
+
+
+def test_solid_color_round_trip_and_take() -> None:
+    content = Content.solid_color("#00ff00")
+    assert content.kind is ContentType.SOLID_COLOR
+    assert content.background_color == "#00FF00"
+    assert Content.from_dict(content.to_dict()) == content
+    assert Content.from_preset_dict(content.to_preset_dict()) == content
+
+    state = ApplicationState()
+    state.set_preview(ChannelRole.VENUE, content)
+    assert state.venue.live_content.kind is ContentType.BLACK
+    assert state.take(ChannelRole.VENUE) == (True, "")
+    assert state.venue.live_content == content

@@ -160,17 +160,23 @@ def generate_playlist(tracks: list[Path]) -> None:
     playlist_dir.mkdir(parents=True, exist_ok=True)
     path = playlist_dir / "sample_playlist.json"
     payload = {
-        "version": 1,
+        "version": 2,
         "name": "sample_playlist",
         "current_index": 0,
         "repeat_mode": "none",
         "items": [
             {
-                "item_id": f"sample-track-{index}",
-                "path": f"../audio/{track.name}",
-                "relative": True,
-                "title": f"Sample Track {index:02d}",
+                "id": f"sample-track-{index}",
+                "source_type": "local_file",
+                "source": f"../audio/{track.name}",
+                "source_relative": True,
+                "display_title": f"Sample Track {index:02d}",
                 "duration_ms": duration * 1000,
+                "availability": "ready",
+                "error_message": "",
+                "metadata": {},
+                "fallback_path": None,
+                "fallback_relative": False,
             }
             for index, (track, duration) in enumerate(zip(tracks, (5, 7, 9), strict=True), 1)
         ],

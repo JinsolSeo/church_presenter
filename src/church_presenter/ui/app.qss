@@ -46,6 +46,12 @@ QFrame#AppHeader, QFrame#ContentPanel, QFrame#VideoControlPanel {
     border-radius: {{panel_radius}}px;
 }
 
+QFrame#BlankPresetPanel {
+    background-color: {{surface_alt}};
+    border: {{border_width}}px solid {{border}};
+    border-radius: {{panel_radius}}px;
+}
+
 QFrame#PreviewMonitor, QFrame#LiveMonitor {
     background-color: {{surface}};
     border: {{monitor_border_width}}px solid {{border_strong}};
@@ -198,6 +204,19 @@ QPushButton[variant="take"]:disabled {
     border-color: {{border}};
 }
 
+QPushButton[variant="take"][heightRole="standard"] {
+    min-height: {{button_height}}px;
+    padding: 0 {{md}}px;
+    font-size: {{font_size}}px;
+}
+
+QFrame#VideoControlPanel QPushButton {
+    min-height: {{compact_button_height}}px;
+    max-height: {{compact_button_height}}px;
+    padding: 0 {{compact_md}}px;
+    font-size: {{compact_font_size}}px;
+}
+
 QPushButton[variant="danger"] {
     color: {{text_on_accent}};
     background-color: {{danger}};
@@ -320,6 +339,12 @@ QListWidget#SubtitleCardList[selectedCardLive="true"]::item:selected {
     color: {{text_on_accent}};
     background-color: {{live}};
     border-left: 3px solid {{live_pressed}};
+}
+
+QListWidget#AudioPlaylistList[currentTrackSelected="true"]::item:selected {
+    color: {{text_on_accent}};
+    background-color: {{accent}};
+    border-left: 3px solid {{accent_pressed}};
 }
 
 QListWidget#PdfThumbnailList::item {
@@ -451,6 +476,12 @@ QMainWindow#ControllerWindow[uiDensity="compact"] QPushButton[variant="take"] {
     min-height: {{compact_take_button_height}}px;
     padding: 0 {{compact_md}}px;
     font-size: {{compact_take_button_size}}px;
+}
+
+QMainWindow#ControllerWindow[uiDensity="compact"]
+QPushButton[variant="take"][heightRole="standard"] {
+    min-height: {{compact_button_height}}px;
+    font-size: {{compact_font_size}}px;
 }
 
 QMainWindow#ControllerWindow[uiDensity="compact"] QLineEdit,

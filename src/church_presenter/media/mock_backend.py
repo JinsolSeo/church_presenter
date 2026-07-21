@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtGui import QColor, QImage
 
 from church_presenter.domain.enums import PlaybackStatus
+from church_presenter.media.audio_backend import StreamingAudioBackend
 from church_presenter.media.base import MediaPlaybackBackend
 
 
@@ -102,6 +103,85 @@ class MockMediaBackend(MediaPlaybackBackend):
         image = QImage(320, 180, QImage.Format.Format_RGB32)
         image.fill(QColor(color))
         self.frame_ready.emit(image)
+
+    def _set_status(self, status: PlaybackStatus) -> None:
+        self._status = status
+        self.status_changed.emit(status)
+
+
+class MockStreamingAudioBackend(StreamingAudioBackend):
+    """Deterministic URL backend used by router and controller tests."""
+
+    def __init__(self, *, duration_ms: int = 12_000) -> None:
+        super().__init__()
+        self.duration_ms = duration_ms
+        self.position_ms = 0
+        self.volume = 1.0
+        self.muted = False
+        self._source = ""
+        self._status = PlaybackStatus.UNLOADED
+        self.fail_sources: set[str] = set()
+        self.closed = False
+
+    def load(self, source: str) -> None:
+        self._source = source
+        self._set_status(PlaybackStatus.PREPARING)
+        if source in self.fail_sources:
+            self.fail("Mock streaming failure")
+            return
+        self.position_ms = 0
+        self.duration_changed.emit(self.duration_ms)
+        self._set_status(PlaybackStatus.READY)
+        self.loaded.emit()
+
+    def play(self) -> None:
+        if not self._source:
+            self.fail("No mock stream loaded")
+            return
+        self._set_status(PlaybackStatus.PLAYING)
+
+    def pause(self) -> None:
+        self._set_status(PlaybackStatus.PAUSED)
+
+    def stop(self) -> None:
+        self.position_ms = 0
+        self.position_changed.emit(0)
+        self._set_status(PlaybackStatus.STOPPED)
+
+    def seek(self, position_ms: int) -> None:
+        self.position_ms = max(0, min(self.duration_ms, position_ms))
+        self.position_changed.emit(self.position_ms)
+
+    def set_volume(self, volume: float) -> None:
+        self.volume = max(0.0, min(1.0, volume))
+
+    def set_muted(self, muted: bool) -> None:
+        self.muted = muted
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        return not device_id
+
+    def close(self) -> None:
+        self.stop()
+        self._source = ""
+        self._status = PlaybackStatus.UNLOADED
+        self.closed = True
+
+    @property
+    def status(self) -> PlaybackStatus:
+        return self._status
+
+    @property
+    def source(self) -> str:
+        return self._source
+
+    def finish(self) -> None:
+        self._set_status(PlaybackStatus.ENDED)
+        self.ended.emit()
+
+    def fail(self, message: str) -> None:
+        self._set_status(PlaybackStatus.ERROR)
+        self.error_occurred.emit(message)
 
     def _set_status(self, status: PlaybackStatus) -> None:
         self._status = status

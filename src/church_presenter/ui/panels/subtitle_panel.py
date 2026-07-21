@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -59,11 +58,11 @@ class SubtitlePanel(QWidget):
             QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Preferred,
         )
-        open_button = QPushButton("TXT 열기")
-        open_button.setProperty("variant", "primary")
+        self.open_button = QPushButton("TXT 열기")
+        self.open_button.setProperty("variant", "primary")
         self.save_button = QPushButton("저장")
         save_as_button = QPushButton("다른 이름으로 저장")
-        reload_button = QPushButton("다시 불러오기")
+        self.reload_button = QPushButton("다시 불러오기")
         style_button = QPushButton("Subtitle Style Settings")
         self.group_spin = QSpinBox()
         self.group_spin.setRange(1, 8)
@@ -71,10 +70,10 @@ class SubtitlePanel(QWidget):
         self.group_spin.setPrefix("그룹 ")
         for widget in (
             self.file_label,
-            open_button,
+            self.open_button,
             self.save_button,
             save_as_button,
-            reload_button,
+            self.reload_button,
             style_button,
             self.group_spin,
         ):
@@ -101,34 +100,39 @@ class SubtitlePanel(QWidget):
         self.line_edit = QLineEdit()
         self.line_edit.setPlaceholderText("선택한 원본 줄을 편집하고 Enter")
         right_layout.addWidget(self.line_edit)
-        actions = QGridLayout()
-        add_button = QPushButton("새 줄 추가")
-        delete_button = QPushButton("줄 삭제")
-        delete_button.setProperty("variant", "danger")
-        up_button = QPushButton("위로")
-        down_button = QPushButton("아래로")
-        actions.addWidget(add_button, 0, 0)
-        actions.addWidget(delete_button, 0, 1)
-        actions.addWidget(up_button, 1, 0)
-        actions.addWidget(down_button, 1, 1)
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self.add_line_button = QPushButton("줄 추가")
+        self.delete_line_button = QPushButton("줄 삭제")
+        self.delete_line_button.setProperty("variant", "danger")
+        self.move_up_button = QPushButton("위로")
+        self.move_down_button = QPushButton("아래로")
+        for button in (
+            self.add_line_button,
+            self.delete_line_button,
+            self.move_up_button,
+            self.move_down_button,
+        ):
+            button.setMaximumWidth(110)
+            actions.addWidget(button)
         right_layout.addLayout(actions)
         splitter.addWidget(right)
-        splitter.setSizes([560, 420])
+        splitter.setSizes([520, 460])
         layout.addWidget(splitter)
 
-        open_button.clicked.connect(self.open_file)
+        self.open_button.clicked.connect(self.open_file)
         self.save_button.clicked.connect(self.save)
         save_as_button.clicked.connect(self.save_as)
-        reload_button.clicked.connect(self.reload)
+        self.reload_button.clicked.connect(self.reload)
         style_button.clicked.connect(self.style_requested)
         self.group_spin.valueChanged.connect(self._change_group_size)
         self.card_list.currentRowChanged.connect(self._card_selected)
         self.line_list.currentRowChanged.connect(self._source_selected)
         self.line_edit.returnPressed.connect(self._commit_line_edit)
-        add_button.clicked.connect(self._add_line)
-        delete_button.clicked.connect(self._delete_line)
-        up_button.clicked.connect(lambda: self._move_line(-1))
-        down_button.clicked.connect(lambda: self._move_line(1))
+        self.add_line_button.clicked.connect(self._add_line)
+        self.delete_line_button.clicked.connect(self._delete_line)
+        self.move_up_button.clicked.connect(lambda: self._move_line(-1))
+        self.move_down_button.clicked.connect(lambda: self._move_line(1))
         self._refresh()
 
     def set_card_theme(
@@ -155,14 +159,15 @@ class SubtitlePanel(QWidget):
     def load_path(self, path: Path, *, warn: bool = True) -> bool:
         if warn and not self.confirm_discard_changes():
             return False
+        source = path.expanduser().resolve()
         try:
-            document = load_subtitle(path, self.group_spin.value())
+            document = load_subtitle(source, self.group_spin.value())
         except (OSError, UnicodeError) as error:
             QMessageBox.critical(self, "자막 파일 오류", str(error))
             return False
         self.document = document
-        self.file_label.setText(str(path))
-        self.file_label.setToolTip(str(path))
+        self.file_label.setText(str(source))
+        self.file_label.setToolTip(str(source))
         self.preview_index = 0 if document.cards else -1
         self.live_index = -1
         self._refresh()
@@ -213,9 +218,10 @@ class SubtitlePanel(QWidget):
         self.document_changed.emit(self.document)
         return True
 
-    def reload(self) -> None:
-        if self.document.path is not None:
-            self.load_path(self.document.path)
+    def reload(self) -> bool:
+        if self.document.path is None:
+            return False
+        return self.load_path(self.document.path)
 
     def confirm_discard_changes(self) -> bool:
         if not self.document.is_modified:
@@ -224,14 +230,14 @@ class SubtitlePanel(QWidget):
             self,
             "저장하지 않은 변경사항",
             "자막 변경사항을 저장하시겠습니까?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
-        if answer is QMessageBox.StandardButton.Save:
+        if answer == QMessageBox.StandardButton.Yes:
             return self.save()
-        return answer is QMessageBox.StandardButton.Discard
+        return answer == QMessageBox.StandardButton.No
 
     def navigate(self, destination: int) -> None:
         count = len(self.document.cards)
@@ -311,17 +317,27 @@ class SubtitlePanel(QWidget):
         self.document_changed.emit(self.document)
 
     def _add_line(self) -> None:
-        text = self.line_edit.text().strip() or "새 자막"
         index = (
-            self._selected_source_index + 1
+            self._selected_source_index
             if self._selected_source_index >= 0
             else len(self.document.lines)
         )
-        self.document.add_line(text, index)
+        self.document.add_line("새 자막", index)
         self.live_index = -1
         self.preview_index = index // self.document.group_size
+        self._selected_source_index = index
         self._refresh()
+        self._select_source_index(index)
+        self.line_edit.setFocus()
+        self.line_edit.selectAll()
         self.document_changed.emit(self.document)
+
+    def _select_source_index(self, source_index: int) -> None:
+        for row in range(self.line_list.count()):
+            item = self.line_list.item(row)
+            if int(item.data(Qt.ItemDataRole.UserRole)) == source_index:
+                self.line_list.setCurrentRow(row)
+                return
 
     def _delete_line(self) -> None:
         if self._selected_source_index < 0:

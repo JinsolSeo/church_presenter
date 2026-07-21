@@ -212,7 +212,9 @@ class PreviewPresetPanel(QWidget):
     @staticmethod
     def _content_label(content: Content) -> str:
         if content.kind is ContentType.BLACK:
-            return "BLACK"
+            return "빈 화면 · 검정"
+        if content.kind is ContentType.SOLID_COLOR:
+            return f"빈 화면 · {content.background_color}"
         if content.kind is ContentType.SUBTITLE_KEY:
             position = content.subtitle_card_index
             return f"자막 카드 · {position + 1 if position is not None else '미지정'}"

@@ -27,7 +27,7 @@
 - [ ] 서로 다른 영상 양쪽 동시 재생
 - [ ] 동일 영상 Send to Both / TAKE BOTH
 - [ ] 한쪽 Cue 실패 시 양쪽 기존 Live 유지
-- [ ] BLACK/PDF/VIDEO Fade 0ms, 250ms, 2000ms
+- [ ] BLACK/PDF/VIDEO 고정 250ms Fade
 
 ## 배경음악
 
@@ -42,6 +42,20 @@
 - [ ] 영상 Preview와 TAKE 시 음악 유지
 - [ ] 영상 Play 시 음악 자동 Pause 안내
 - [ ] 영상 종료/Stop/Error 후 음악 자동 재개 안 됨
+- [ ] 공개 단일 YouTube URL 메타데이터 조회
+- [ ] YouTube Play/Pause/Stop/Seek/Previous/Next 및 반복
+- [ ] PREPARING/BUFFERING/ERROR 상태에서 Controller 응답 유지
+- [ ] 네트워크 차단 시 로컬 fallback 전환 문구와 재생
+- [ ] fallback 없음/삭제 시 항목 오류만 발생하고 로컬 미디어 유지
+- [ ] yt-dlp 미설치 상태에서 로컬 음악/영상 유지
+- [ ] `mpv-2.dll` 없음 또는 로드 실패 상태에서 앱 유지
+- [ ] 종료 후 libmpv thread/process 잔류 없음
+
+Windows 개발 환경에서는 `python -m pip install -e ".[dev]"`로 Python wrapper와
+yt-dlp를 설치한 뒤, `mpv-2.dll`을 제공하는 libmpv 빌드의 디렉터리를 `PATH`에
+추가합니다. 배포 패키지는 DLL을 실행 파일 옆에 포함하고 대상 PC에서 새 프로세스로
+실행해 로드 여부를 확인합니다. YouTube 검증 전에는
+`python -m pip install --upgrade yt-dlp`로 extractor를 갱신합니다.
 
 ## 운영 안정성
 

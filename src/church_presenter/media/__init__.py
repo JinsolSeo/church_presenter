@@ -1,1 +1,1 @@
-"""Phase 2 media extension points."""
+"""Replaceable local and streaming media extension points."""

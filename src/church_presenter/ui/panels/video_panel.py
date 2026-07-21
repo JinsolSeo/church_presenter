@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +45,7 @@ class VideoPanel(QWidget):
     folder_changed = Signal(str)
     selection_changed = Signal(str)
     settings_changed = Signal()
+    status_changed = Signal(str)
 
     def __init__(
         self,
@@ -55,7 +55,6 @@ class VideoPanel(QWidget):
         descending: bool,
         volume: int,
         muted: bool,
-        fade_duration_ms: int,
         last_selected_path: Path | None = None,
     ) -> None:
         super().__init__()
@@ -70,10 +69,11 @@ class VideoPanel(QWidget):
             ChannelRole.VENUE: False,
         }
         self._compact_mode = False
+        self._last_runtime_notice = ""
         self.library = MediaLibraryCoordinator()
         self.library.scanned.connect(self._scan_finished)
         self.setAcceptDrops(True)
-        self._build_ui(volume, muted, fade_duration_ms)
+        self._build_ui(volume, muted)
         if folder:
             self.refresh()
 
@@ -81,7 +81,7 @@ class VideoPanel(QWidget):
     def target_role(self) -> ChannelRole:
         return ChannelRole(self.target_combo.currentData())
 
-    def _build_ui(self, volume: int, muted: bool, fade_duration_ms: int) -> None:
+    def _build_ui(self, volume: int, muted: bool) -> None:
         layout = QVBoxLayout(self)
         self.root_layout = layout
         toolbar = QHBoxLayout()
@@ -151,6 +151,8 @@ class VideoPanel(QWidget):
         self.take_both_button = QPushButton("TAKE BOTH")
         self.take_button.setProperty("variant", "take")
         self.take_both_button.setProperty("variant", "take")
+        self.take_button.setProperty("heightRole", "standard")
+        self.take_both_button.setProperty("heightRole", "standard")
         self.take_button.setEnabled(False)
         self.take_both_button.setEnabled(False)
         self.play_button = QPushButton("Play")
@@ -165,12 +167,6 @@ class VideoPanel(QWidget):
         self.volume_slider.setValue(volume)
         self.mute_check = QCheckBox("음소거")
         self.mute_check.setChecked(muted)
-        self.fade_spin = QSpinBox()
-        self.fade_spin.setRange(0, 2000)
-        self.fade_spin.setSuffix(" ms Fade")
-        self.fade_spin.setValue(fade_duration_ms)
-        self.status_label = QLabel("UNLOADED")
-        self.status_label.setMinimumWidth(0)
         controls.addWidget(QLabel("제어 채널"), 0, 0)
         controls.addWidget(self.target_combo, 0, 1, 1, 3)
         controls.addWidget(cue_button, 1, 0, 1, 2)
@@ -186,11 +182,9 @@ class VideoPanel(QWidget):
         controls.addWidget(QLabel("영상 볼륨"), 5, 0)
         controls.addWidget(self.volume_slider, 5, 1, 1, 2)
         controls.addWidget(self.mute_check, 5, 3)
-        controls.addWidget(self.fade_spin, 6, 0)
-        controls.addWidget(self.status_label, 6, 1, 1, 3)
         for column in range(4):
             controls.setColumnStretch(column, 1)
-        controls.setRowStretch(7, 1)
+        controls.setRowStretch(6, 1)
         content_layout.addWidget(self.control_panel)
         layout.addLayout(content_layout, 1)
 
@@ -213,7 +207,6 @@ class VideoPanel(QWidget):
         )
         self.volume_slider.valueChanged.connect(self._volume_changed)
         self.mute_check.toggled.connect(self._mute_changed)
-        self.fade_spin.valueChanged.connect(self.settings_changed)
         self.manager.runtime_changed.connect(self._runtime_changed)
         self._target_changed()
 
@@ -261,7 +254,7 @@ class VideoPanel(QWidget):
         self._preview_ready[role] = False
         self._update_take_buttons()
         self.preview_requested.emit(role, content, False)
-        self.status_label.setText(f"{channel_label(role)} LOADING")
+        self._set_status(f"{channel_label(role)} LOADING")
         self.manager.cue_preview(role, self.selected_path)
 
     def cue_both(self) -> None:
@@ -272,7 +265,7 @@ class VideoPanel(QWidget):
         self._preview_ready[ChannelRole.VENUE] = False
         self._update_take_buttons()
         self.send_to_both_requested.emit(content, False)
-        self.status_label.setText("송출 + 현장 LOADING")
+        self._set_status("송출 + 현장 LOADING")
         self.manager.cue_both(self.selected_path)
 
     def preview_result(
@@ -303,7 +296,7 @@ class VideoPanel(QWidget):
                 )
         self._preview_ready[role] = not error and not image.isNull()
         self._update_take_buttons()
-        self.status_label.setText(
+        self._set_status(
             f"{channel_label(role)} ERROR · {error}"
             if error
             else f"{channel_label(role)} CUE · TAKE 후에도 자동 재생하지 않습니다."
@@ -358,9 +351,10 @@ class VideoPanel(QWidget):
             f"{format_media_time(runtime.position_ms)} / {format_media_time(runtime.duration_ms)}"
         )
         suffix = f" · {runtime.error_message}" if runtime.error_message else ""
-        self.status_label.setText(
-            f"{channel_label(role)} {runtime.status.value.upper()}{suffix}"
-        )
+        notice = f"{channel_label(role)} {runtime.status.value.upper()}{suffix}"
+        if notice != self._last_runtime_notice:
+            self._last_runtime_notice = notice
+            self._set_status(notice)
         self._update_playback_controls(runtime)
 
     def _target_changed(self) -> None:
@@ -404,6 +398,9 @@ class VideoPanel(QWidget):
     def _update_take_buttons(self) -> None:
         self.take_button.setEnabled(self._preview_ready[self.target_role])
         self.take_both_button.setEnabled(all(self._preview_ready.values()))
+
+    def _set_status(self, message: str) -> None:
+        self.status_changed.emit(message)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if any(

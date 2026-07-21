@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from church_presenter.domain.enums import (
+    AudioAvailability,
+    AudioSourceType,
     Availability,
     ContentType,
     HorizontalAnchor,
@@ -78,10 +80,25 @@ class Content:
     video_path: Path | None = None
     subtitle_style: SubtitleStyle = field(default_factory=SubtitleStyle)
     key_color: str = "#00FF00"
+    background_color: str = "#000000"
 
     @classmethod
     def black(cls) -> Content:
         return cls(ContentType.BLACK)
+
+    @classmethod
+    def solid_color(cls, color: str) -> Content:
+        """Create a full-frame blank screen filled with one RGB color."""
+        normalized = color.strip().upper()
+        if (
+            len(normalized) != 7
+            or not normalized.startswith("#")
+            or any(character not in "0123456789ABCDEF" for character in normalized[1:])
+        ):
+            raise ValueError("solid color must use #RRGGBB format")
+        if normalized == "#000000":
+            return cls.black()
+        return cls(ContentType.SOLID_COLOR, background_color=normalized)
 
     @classmethod
     def subtitle(
@@ -119,6 +136,7 @@ class Content:
             "video_path": str(self.video_path) if self.video_path is not None else None,
             "subtitle_style": self.subtitle_style.to_dict(),
             "key_color": self.key_color,
+            "background_color": self.background_color,
         }
 
     @classmethod
@@ -139,6 +157,7 @@ class Content:
             video_path=Path(video_path) if isinstance(video_path, str) and video_path else None,
             subtitle_style=SubtitleStyle.from_dict(style_data),
             key_color=str(data.get("key_color", "#00FF00")),
+            background_color=str(data.get("background_color", "#000000")),
         )
 
     def as_preset_reference(self) -> Content:
@@ -152,6 +171,8 @@ class Content:
             return Content(kind=self.kind, pdf_page=self.pdf_page)
         if self.kind is ContentType.VIDEO:
             return Content(kind=self.kind)
+        if self.kind is ContentType.SOLID_COLOR:
+            return Content.solid_color(self.background_color)
         return Content.black()
 
     def to_preset_dict(self) -> dict[str, Any]:
@@ -161,6 +182,8 @@ class Content:
             data["position"] = self.subtitle_card_index
         elif self.kind is ContentType.PDF_PAGE:
             data["position"] = self.pdf_page
+        elif self.kind is ContentType.SOLID_COLOR:
+            data["color"] = self.background_color
         return data
 
     @classmethod
@@ -174,6 +197,8 @@ class Content:
             return cls(kind=kind, pdf_page=position)
         if kind is ContentType.VIDEO:
             return cls(kind=kind)
+        if kind is ContentType.SOLID_COLOR:
+            return cls.solid_color(str(data.get("color", "#00FF00")))
         return cls.black()
 
 
@@ -350,6 +375,9 @@ class AudioPlaybackRuntimeState:
     """Global background-music playback state."""
 
     path: Path | None = None
+    source_type: AudioSourceType | None = None
+    source: str = ""
+    title: str = ""
     status: PlaybackStatus = PlaybackStatus.UNLOADED
     position_ms: int = 0
     duration_ms: int = 0
@@ -357,6 +385,8 @@ class AudioPlaybackRuntimeState:
     is_muted: bool = False
     pause_reason: PauseReason = PauseReason.NONE
     error_message: str = ""
+    using_fallback: bool = False
+    status_message: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,11 +394,62 @@ class PlaylistItem:
     """One stable playlist entry."""
 
     item_id: str
-    path: Path
+    path: Path | None
     title: str
     duration_ms: int | None = None
     is_available: bool = True
     error_message: str = ""
+    source_type: AudioSourceType = AudioSourceType.LOCAL_FILE
+    source: str = ""
+    fallback_path: Path | None = None
+    availability: AudioAvailability = AudioAvailability.READY
+    metadata: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Normalize compatibility fields used by version-1 local playlists."""
+        if self.source_type is AudioSourceType.LOCAL_FILE:
+            if self.path is None:
+                raise ValueError("local playlist items require a path")
+            resolved = self.path.expanduser().resolve()
+            object.__setattr__(self, "path", resolved)
+            object.__setattr__(self, "source", self.source or str(resolved))
+            state = AudioAvailability.READY if self.is_available else AudioAvailability.MISSING
+            object.__setattr__(self, "availability", state)
+        elif not self.source:
+            raise ValueError("YouTube playlist items require a source URL")
+
+    @property
+    def display_title(self) -> str:
+        """Return the title shown in the playlist UI."""
+        return self.title
+
+    @classmethod
+    def youtube(
+        cls,
+        item_id: str,
+        url: str,
+        *,
+        title: str = "YouTube 항목",
+        duration_ms: int | None = None,
+        fallback_path: Path | None = None,
+        availability: AudioAvailability = AudioAvailability.UNRESOLVED,
+        metadata: dict[str, str] | None = None,
+        error_message: str = "",
+    ) -> PlaylistItem:
+        """Create a YouTube playlist item without inventing a local path."""
+        return cls(
+            item_id=item_id,
+            path=None,
+            title=title,
+            duration_ms=duration_ms,
+            is_available=availability is AudioAvailability.READY,
+            error_message=error_message,
+            source_type=AudioSourceType.YOUTUBE,
+            source=url,
+            fallback_path=fallback_path.expanduser().resolve() if fallback_path else None,
+            availability=availability,
+            metadata=dict(metadata or {}),
+        )
 
 
 @dataclass(slots=True)

@@ -20,7 +20,10 @@ from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
 from church_presenter.services.file_library_service import scan_library, sort_items
-from church_presenter.services.transition_service import TransitionService
+from church_presenter.services.transition_service import (
+    FIXED_OUTPUT_FADE_DURATION_MS,
+    TransitionService,
+)
 
 
 def media_file(path: Path, content: bytes = b"generated") -> Path:
@@ -336,6 +339,8 @@ def test_video_play_pauses_music_only_at_play(tmp_path: Path) -> None:
 
 
 def test_transition_policy_and_backend_contract() -> None:
+    assert FIXED_OUTPUT_FADE_DURATION_MS == 250
+    assert TransitionService().fade_duration_ms == 250
     transition = TransitionService(5000)
     assert transition.fade_duration_ms == 2000
     assert transition.should_fade(Content.black().kind, ContentType.PDF_PAGE)

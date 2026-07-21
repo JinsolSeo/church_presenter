@@ -46,6 +46,7 @@ from church_presenter.services.audio_device_service import AudioDeviceService
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import ScreenService, validate_role_assignment
 from church_presenter.services.settings_service import SettingsService
+from church_presenter.services.transition_service import FIXED_OUTPUT_FADE_DURATION_MS
 from church_presenter.ui.dialogs.screen_settings_dialog import ScreenSettingsDialog
 from church_presenter.ui.dialogs.subtitle_style_dialog import SubtitleStyleDialog
 from church_presenter.ui.labels import channel_label
@@ -134,7 +135,12 @@ class ChannelMonitor(QFrame):
             self.container.setMinimumSize(160, 90)
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
-        self.mode.setText(content.kind.value.upper())
+        mode = (
+            "BLANK"
+            if content.kind is ContentType.SOLID_COLOR
+            else content.kind.value.upper()
+        )
+        self.mode.setText(mode)
         if content != self.surface.target_content:
             self.surface.set_content(content, fade_duration_ms)
 
@@ -170,6 +176,7 @@ class ControllerWindow(QMainWindow):
         self.screen_service = screen_service
         self.settings_service = settings_service
         self.settings = settings
+        self.settings.fade_duration_ms = FIXED_OUTPUT_FADE_DURATION_MS
         self.theme_manager = theme_manager or ThemeManager()
         if not self.theme_manager.current_theme_id():
             applied_theme = self.theme_manager.apply_theme(application, settings.current_theme)
@@ -212,26 +219,16 @@ class ControllerWindow(QMainWindow):
             muted=settings.video_muted,
         )
         self.playlist_service = PlaylistService()
-        playlist = None
-        if settings.last_playlist:
-            try:
-                playlist_path = Path(settings.last_playlist)
-                if playlist_path.is_file():
-                    playlist = self.playlist_service.load(playlist_path)
-            except (OSError, ValueError, TypeError):
-                LOGGER.exception("Could not restore background-music playlist")
-        if playlist is not None:
-            playlist.repeat_mode = settings.repeat_mode
         self.audio_controller = AudioPlaybackController(
             audio_backend
             or QtMediaBackend(
                 video=False,
                 audio_device_resolver=self.audio_device_service.resolve,
             ),
-            playlist,
             volume=settings.music_volume / 100,
             muted=settings.music_muted,
         )
+        self.audio_controller.playlist.repeat_mode = settings.repeat_mode
         self._audio_startup_warning = ""
         if not self._apply_audio_output_device(settings.audio_output_device_id):
             settings.audio_output_device_id = ""
@@ -239,8 +236,6 @@ class ControllerWindow(QMainWindow):
             self._audio_startup_warning = (
                 "저장된 오디오 출력 장치를 찾을 수 없어 시스템 기본 출력으로 전환했습니다."
             )
-        if playlist is not None:
-            self.audio_controller.cue_current(settings.audio_position_ms)
         self.broadcast_output: BroadcastOutputWindow | None = None
         self.venue_output: VenueOutputWindow | None = None
         self.broadcast_simulator: SimulationWindow | None = None
@@ -460,7 +455,6 @@ class ControllerWindow(QMainWindow):
             self.settings.video_sort_descending,
             self.settings.video_volume,
             self.settings.video_muted,
-            self.settings.fade_duration_ms,
             Path(self.settings.last_video_file) if self.settings.last_video_file else None,
         )
         self.audio_panel = AudioPanel(
@@ -470,13 +464,12 @@ class ControllerWindow(QMainWindow):
             self.settings.audio_sort_field,
             self.settings.audio_sort_descending,
         )
-        if self.settings.last_playlist:
-            self.audio_panel.playlist_path = Path(self.settings.last_playlist)
+        self._apply_audio_playlist_theme()
         self.tabs.addTab(self.subtitle_panel, "자막")
         self.tabs.addTab(self.pdf_panel, "PDF")
         self.tabs.addTab(self.video_panel, "영상")
         self.tabs.addTab(self.audio_panel, "배경음악")
-        self.tabs.addTab(self.black_panel, "검은 화면")
+        self.tabs.addTab(self.black_panel, "빈 화면")
         self.tabs.setMinimumHeight(0)
         self.pdf_panel.set_compact_actions(self.width() < 1100)
         self.content_scroll = QScrollArea()
@@ -643,6 +636,7 @@ class ControllerWindow(QMainWindow):
             self.status.setText(self.theme_manager.last_warning)
             return
         self._apply_subtitle_card_theme()
+        self._apply_audio_playlist_theme()
         self.settings.current_theme = applied
         if applied != theme_id:
             fallback_index = self.theme_combo.findData(applied)
@@ -665,6 +659,18 @@ class ControllerWindow(QMainWindow):
         self.subtitle_panel.set_card_theme(
             live_background=str(self.theme_manager.current_value("colors", "live")),
             preview_background=str(
+                self.theme_manager.current_value("colors", "accent")
+            ),
+            text=str(self.theme_manager.current_value("colors", "text_primary")),
+            active_text=str(
+                self.theme_manager.current_value("colors", "text_on_accent")
+            ),
+        )
+
+    def _apply_audio_playlist_theme(self) -> None:
+        """Keep the current-track brush aligned with the active JSON theme."""
+        self.audio_panel.set_playlist_theme(
+            active_background=str(
                 self.theme_manager.current_value("colors", "accent")
             ),
             text=str(self.theme_manager.current_value("colors", "text_primary")),
@@ -703,9 +709,10 @@ class ControllerWindow(QMainWindow):
         self.video_panel.folder_changed.connect(self._video_folder_changed)
         self.video_panel.selection_changed.connect(self._video_selection_changed)
         self.video_panel.settings_changed.connect(self._media_settings_changed)
+        self.video_panel.status_changed.connect(self.status.setText)
         self.audio_panel.folder_changed.connect(self._audio_folder_changed)
-        self.audio_panel.playlist_path_changed.connect(self._playlist_path_changed)
         self.audio_panel.settings_changed.connect(self._media_settings_changed)
+        self.audio_panel.status_changed.connect(self.status.setText)
         self.video_manager.preview_result.connect(self._video_preview_result)
         self.video_manager.live_frame_ready.connect(self._video_live_frame)
         self.video_manager.play_started.connect(self._video_play_started)
@@ -1128,6 +1135,9 @@ class ControllerWindow(QMainWindow):
             label = channel_label(role)
             if cue.kind is ContentType.BLACK:
                 resolved[role] = Content.black()
+                continue
+            if cue.kind is ContentType.SOLID_COLOR:
+                resolved[role] = Content.solid_color(cue.background_color)
                 continue
             if cue.kind is ContentType.SUBTITLE_KEY:
                 position = cue.subtitle_card_index
@@ -1674,7 +1684,7 @@ class ControllerWindow(QMainWindow):
 
     def _push_live(self, role: ChannelRole) -> None:
         content = self.state.channel(role).live_content
-        fade = self.settings.fade_duration_ms
+        fade = FIXED_OUTPUT_FADE_DURATION_MS
         if role is ChannelRole.BROADCAST:
             self.broadcast_live.set_content(content, fade)
             if self.broadcast_output:
@@ -1767,11 +1777,6 @@ class ControllerWindow(QMainWindow):
     def _video_selection_changed(self, path: str) -> None:
         self.settings.last_video_file = path
 
-    def _playlist_path_changed(self, path: str) -> None:
-        self.settings.last_playlist = path
-        if path and path not in self.settings.recent_playlists:
-            self.settings.recent_playlists = [path, *self.settings.recent_playlists][:10]
-
     def _media_settings_changed(self) -> None:
         self.settings.video_sort_field = self.video_panel.sort_field
         self.settings.video_sort_descending = self.video_panel.descending
@@ -1779,7 +1784,7 @@ class ControllerWindow(QMainWindow):
         self.settings.audio_sort_descending = self.audio_panel.descending
         self.settings.video_volume = self.video_panel.volume_slider.value()
         self.settings.video_muted = self.video_panel.mute_check.isChecked()
-        self.settings.fade_duration_ms = self.video_panel.fade_spin.value()
+        self.settings.fade_duration_ms = FIXED_OUTPUT_FADE_DURATION_MS
         self.settings.music_volume = self.audio_panel.volume_slider.value()
         self.settings.music_muted = self.audio_panel.mute_check.isChecked()
         self.settings.repeat_mode = self.audio_controller.playlist.repeat_mode
@@ -1902,6 +1907,15 @@ class ControllerWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if (
+            watched is self.subtitle_panel.line_edit
+            and event.type() is QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self.subtitle_panel.line_edit.returnPressed.emit()
+            event.accept()
+            return True
+        if (
             event.type() is QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)
             and self._handle_navigation_key(
@@ -2015,7 +2029,7 @@ class ControllerWindow(QMainWindow):
         return False
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if not self._handle_navigation_key(event, self):
+        if not self._handle_navigation_key(event):
             super().keyPressEvent(event)
 
     def _persist_settings(self) -> None:
@@ -2024,7 +2038,11 @@ class ControllerWindow(QMainWindow):
         self._media_settings_changed()
         self.settings.audio_position_ms = self.audio_controller.runtime.position_ms
         current_audio = self.audio_controller.playlist.current_item
-        self.settings.last_audio_file = str(current_audio.path) if current_audio else ""
+        self.settings.last_audio_file = (
+            str(current_audio.path)
+            if current_audio is not None and current_audio.path is not None
+            else ""
+        )
         self.settings.panel_layout = f"tabs:{self.tabs.currentIndex()}"
         splitter_data = self.workspace_splitter.saveState().toBase64().data()
         self.settings.workspace_splitter_state = bytes(splitter_data).decode("ascii")

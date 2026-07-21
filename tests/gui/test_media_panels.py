@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QPushButton
 
-from church_presenter.domain.enums import ChannelRole, ContentType, PauseReason, PlaybackStatus
+from church_presenter.domain.enums import (
+    AudioSourceType,
+    ChannelRole,
+    ContentType,
+    PauseReason,
+    PlaybackStatus,
+)
 from church_presenter.domain.models import AppSettings, Content, ScreenInfo
 from church_presenter.media.mock_backend import MockMediaBackend
+from church_presenter.media.playlist import YOUTUBE_URL_FILENAME
+from church_presenter.media.youtube_resolver import YouTubeMetadata
 from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import MockScreenService
@@ -79,6 +89,17 @@ def test_video_controls_are_compact_and_beside_library(qtbot, tmp_path: Path) ->
 
     assert panel.control_panel.x() >= panel.file_list.geometry().right()
     assert panel.sizeHint().height() <= 380
+    assert panel.take_button.property("heightRole") == "standard"
+    assert panel.take_both_button.property("heightRole") == "standard"
+    assert panel.take_button.height() == panel.play_button.height()
+    assert panel.take_both_button.height() == panel.play_button.height()
+    assert all(
+        button.height() <= 30
+        for button in panel.control_panel.findChildren(QPushButton)
+    )
+    assert not hasattr(panel, "fade_spin")
+    assert not hasattr(panel, "status_label")
+    assert window.settings.fade_duration_ms == 250
 
 
 def test_media_tabs_preserve_preview_and_content_heights(qtbot, tmp_path: Path) -> None:
@@ -139,7 +160,7 @@ def test_video_click_cues_take_play_pause_and_stop_black(qtbot, tmp_path: Path) 
     qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=1000)
     assert window.state.broadcast.preview_content == Content.video(video)
     assert window.state.broadcast.live_content.kind is ContentType.BLACK
-    assert "CUE" in panel.status_label.text()
+    assert "Preview 준비 완료" in window.status.text()
 
     qtbot.mouseClick(panel.take_button, Qt.MouseButton.LeftButton)
     assert window.state.broadcast.live_content.kind is ContentType.VIDEO
@@ -208,7 +229,7 @@ def test_video_play_marks_music_auto_pause_without_resume(qtbot, tmp_path: Path)
     video.write_bytes(b"generated video")
     track.write_bytes(b"generated audio")
     window, _backends = make_media_controller(qtbot, tmp_path)
-    window.audio_controller.add_paths([track])
+    qtbot.waitUntil(lambda: len(window.audio_controller.playlist.items) == 1, timeout=1000)
     assert window.audio_controller.play()
     window.video_panel.selected_path = video
     window.video_panel.cue_selected()
@@ -217,7 +238,7 @@ def test_video_play_marks_music_auto_pause_without_resume(qtbot, tmp_path: Path)
     window.video_manager.play(ChannelRole.BROADCAST)
     assert window.audio_controller.runtime.status is PlaybackStatus.PAUSED
     assert window.audio_controller.runtime.pause_reason is PauseReason.VIDEO
-    assert "영상 재생" in window.audio_panel.status_label.text()
+    assert "영상 재생" in window.status.text()
     window.video_manager.stop(ChannelRole.BROADCAST)
     assert window.audio_controller.runtime.status is PlaybackStatus.PAUSED
     window.audio_controller.playlist.is_modified = False
@@ -243,27 +264,37 @@ def test_audio_device_disconnect_falls_back_to_system_default(
     assert "시스템 기본 출력" in window.status.text()
 
 
-def test_audio_playlist_add_reorder_repeat_and_save_restore(qtbot, tmp_path: Path) -> None:
+def test_audio_folder_is_playlist_and_compact_player_is_on_right(qtbot, tmp_path: Path) -> None:
     tracks = [tmp_path / f"track-{index}.wav" for index in range(3)]
     for track in tracks:
         track.write_bytes(b"generated audio")
     window, _backends = make_media_controller(qtbot, tmp_path)
     panel = window.audio_panel
-    window.audio_controller.add_paths(tracks)
-    assert panel.playlist_list.count() == 3
-    model = panel.playlist_list.model()
-    assert model.moveRows(QModelIndex(), 0, 1, QModelIndex(), 3)
-    assert window.audio_controller.playlist.items[2].path == tracks[0]
+    qtbot.waitUntil(lambda: panel.playlist_list.count() == 3, timeout=1000)
+    assert [item.path for item in window.audio_controller.playlist.items] == tracks
+    assert panel.control_panel.x() > panel.playlist_box.x()
+    assert panel.previous_button.text() == "⏮"
+    assert panel.play_button.text() == "▶"
+    assert panel.pause_button.text() == "⏸"
+    assert panel.stop_button.text() == "■"
+    assert panel.next_button.text() == "⏭"
+    assert not hasattr(panel, "playlist_path")
     panel.repeat_combo.setCurrentIndex(2)
-    playlist_path = tmp_path / "saved-playlist.json"
-    panel.save_playlist(playlist_path)
-    window.audio_controller.clear()
-    panel.load_playlist(playlist_path)
     assert len(window.audio_controller.playlist.items) == 3
     assert window.audio_controller.playlist.repeat_mode.value == "all"
     panel.playlist_list.setCurrentRow(0)
     qtbot.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
     assert window.audio_controller.runtime.status is PlaybackStatus.PLAYING
+    expected_active = QColor(
+        str(window.theme_manager.current_value("colors", "accent"))
+    )
+    expected_active_text = QColor(
+        str(window.theme_manager.current_value("colors", "text_on_accent"))
+    )
+    assert panel.playlist_list.item(0).background().color() == expected_active
+    assert panel.playlist_list.item(0).foreground().color() == expected_active_text
+    panel.playlist_list.setCurrentRow(1)
+    assert panel.playlist_list.item(0).background().color() == expected_active
     panel.seek_slider.sliderMoved.emit(2000)
     assert window.audio_controller.runtime.position_ms == 2000
     qtbot.mouseClick(panel.pause_button, Qt.MouseButton.LeftButton)
@@ -274,7 +305,66 @@ def test_audio_playlist_add_reorder_repeat_and_save_restore(qtbot, tmp_path: Pat
     assert window.audio_controller.runtime.is_muted
     qtbot.mouseClick(panel.stop_button, Qt.MouseButton.LeftButton)
     assert window.audio_controller.runtime.status is PlaybackStatus.STOPPED
+    assert panel.playlist_list.item(0).background().color().alpha() == 0
+    assert not hasattr(panel, "current_title_label")
+    assert not hasattr(panel, "current_source_label")
+    assert not hasattr(panel, "playback_state_label")
+    assert not hasattr(panel, "status_label")
     window.audio_controller.playlist.is_modified = False
+
+
+def test_audio_panel_adds_youtube_and_shows_metadata_state(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    panel = window.audio_panel
+    monkeypatch.setattr(
+        window.audio_controller.metadata_service,
+        "request_metadata",
+        lambda _request_id, _url: True,
+    )
+    monkeypatch.setattr(
+        "church_presenter.ui.panels.audio_panel.QInputDialog.getText",
+        lambda *_args, **_kwargs: ("https://youtu.be/abc123", True),
+    )
+
+    qtbot.mouseClick(panel.youtube_add_button, Qt.MouseButton.LeftButton)
+    url_path = tmp_path / YOUTUBE_URL_FILENAME
+    assert url_path.is_file()
+    assert json.loads(url_path.read_text(encoding="utf-8"))["urls"] == [
+        {"url": "https://youtu.be/abc123"}
+    ]
+    item = window.audio_controller.playlist.items[0]
+    assert item.source_type is AudioSourceType.YOUTUBE
+    assert "YOUTUBE" in panel.playlist_list.item(0).text()
+    assert "unresolved" in panel.playlist_list.item(0).text()
+    assert panel.fallback_button.isEnabled()
+
+    window.audio_controller.metadata_service.resolved.emit(
+        item.item_id,
+        YouTubeMetadata("찬양 스트림", 90_000, "abc123", item.source),
+    )
+    assert "찬양 스트림" in panel.playlist_list.item(0).text()
+    assert "01:30" in panel.playlist_list.item(0).text()
+
+    window.audio_controller.metadata_service.failed.emit(item.item_id, "network unavailable")
+    assert "unavailable" in panel.playlist_list.item(0).text()
+    assert panel.retry_button.isEnabled()
+    fallback = tmp_path / "fallback.wav"
+    fallback.write_bytes(b"audio")
+    monkeypatch.setattr(
+        "church_presenter.ui.panels.audio_panel.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (str(fallback), "Audio"),
+    )
+    qtbot.mouseClick(panel.fallback_button, Qt.MouseButton.LeftButton)
+    assert "fallback" in panel.playlist_list.item(0).text()
+    saved_entry = json.loads(url_path.read_text(encoding="utf-8"))["urls"][0]
+    assert saved_entry["fallback_path"] == "fallback.wav"
+    qtbot.mouseClick(panel.remove_youtube_button, Qt.MouseButton.LeftButton)
+    assert json.loads(url_path.read_text(encoding="utf-8"))["urls"] == []
+    assert panel.playlist_list.count() == 0
 
 
 def test_output_surface_fades_between_black_and_video(qtbot, tmp_path: Path) -> None:
@@ -289,3 +379,14 @@ def test_output_surface_fades_between_black_and_video(qtbot, tmp_path: Path) -> 
     assert surface.content.kind is ContentType.BLACK
     qtbot.waitUntil(lambda: surface.content == content, timeout=1000)
     qtbot.waitUntil(lambda: surface._opacity == 1.0, timeout=1000)
+
+
+def test_output_surface_renders_solid_blank_color(qtbot) -> None:
+    surface = OutputSurface(PdfRenderCoordinator())
+    qtbot.addWidget(surface)
+    surface.resize(320, 180)
+    surface.show()
+    surface.set_content(Content.solid_color("#00FF00"))
+    image = surface.grab().toImage()
+
+    assert image.pixelColor(image.width() // 2, image.height() // 2) == QColor("#00FF00")

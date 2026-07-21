@@ -4,8 +4,10 @@
 
 Phase 2 is a native PySide6 desktop application for one operator, one broadcast
 key/PDF/video output, one venue PDF/video output, and one application-wide
-background-music player. Web streaming, camera capture, OBS, ATEM control,
-device-specific audio routing, and service-order features remain outside scope.
+background-music player. Background music accepts local files and public single-video
+YouTube URLs. YouTube video output, downloads, playlist import, authentication, other
+web streaming, camera capture, OBS, ATEM control, and device-specific mpv routing remain
+outside scope.
 
 ## Reference analysis
 
@@ -24,7 +26,7 @@ ui -> application commands/state -> domain
 ui -> rendering -> domain
 ui -> services -> domain
 services -> filesystem / Qt screen API / PyMuPDF
-media -> domain contract / Qt Multimedia adapter
+media -> domain contract / Qt Multimedia, yt-dlp, and libmpv adapters
 ```
 
 The domain package contains no Qt widgets. `ApplicationState` is the single
@@ -41,7 +43,9 @@ validates both channels before changing either, preserving both old live values
 on any failure. Venue validation rejects subtitle content.
 
 BLACK is the initial and shutdown-safe content. Screen removal also moves the
-affected live channel to BLACK while leaving the application running.
+affected live channel to BLACK while leaving the application running. Operator-selected
+chroma blanks use a separate `SOLID_COLOR` snapshot, so choosing a color never weakens
+the BLACK shutdown fallback or bypasses Preview/TAKE.
 
 ## Rendering
 
@@ -58,18 +62,18 @@ not create additional decoders. Each channel has one prepared Preview decoder
 and one Live decoder; TAKE swaps those prepared/live roles so the first frame is
 already available and the prior Live can continue while a new Preview is cued.
 
-`OutputSurface` performs a linear two-stage opacity fade for transitions among
-BLACK, PDF, and VIDEO. Content readiness is validated before state commit. The
+`OutputSurface` performs a fixed 250ms linear two-stage opacity fade for transitions among
+BLACK, SOLID_COLOR, PDF, and VIDEO. Content readiness is validated before state commit. The
 fade only paints existing frames and images; it does not use blur or allocate a
 second video decoder.
 
 ## Media playback
 
-`MediaPlaybackBackend` is the replaceable command/signal contract.
+`MediaPlaybackBackend` is the replaceable local-media command/signal contract.
 `QtMediaBackend` contains every `QMediaPlayer`, `QAudioOutput`, and `QVideoSink`
 dependency. `MockMediaBackend` gives tests deterministic frames and playback
-events without codecs or audio devices. A future libmpv implementation can
-replace this adapter without changing `ApplicationState` or output widgets.
+events without codecs or audio devices. A future libmpv video implementation can
+replace the video adapter without changing `ApplicationState` or output widgets.
 `AudioDeviceService` enumerates Qt audio outputs, persists an encoded device ID,
 and resolves it for every video and background-music backend. An empty ID keeps
 all audio on the operating system's current default output.
@@ -80,10 +84,38 @@ copied by TAKE; rapidly changing position remains in runtime state. Preview
 decode is muted and stops on its first real frame. Stop, Ended, or fatal Live
 errors emit a channel event that Controller converts to BLACK.
 
-`AudioPlaybackController` owns the global player and `AudioPlaylist`. Playlist
-order, repeat behavior, three-second Previous policy, deleted-file status, and
-video pause reason are domain/media state rather than widget state. Playlists
-use atomic JSON writes and may store paths relative to the playlist directory.
+`AudioPlaybackController` owns the global player and `AudioPlaylist`. It sends every
+transport command through `AudioBackendRouter`; UI code never branches on source type.
+`AudioPanel` treats the selected audio folder as the playlist source of truth. A background
+scan produces sorted local items, then `PlaylistService` appends entries from the fixed
+`youtube_url.json` file when it exists. URL additions, removals, and fallback changes are
+atomically written to that file without a save dialog. The compact transport panel is placed
+to the right of the folder playlist. It contains transport controls only; the active track is
+painted with the theme accent in the left list and operational notices use the Controller
+status bar.
+The router sends local files to the existing `QtMediaBackend` and YouTube sources to
+`MpvAudioBackend`. `YtDlpResolver` validates the public single-video URL and resolves
+metadata or an ephemeral best-audio URL in a bounded worker pool. `MpvAudioBackend`
+initializes libmpv off the UI thread, disables video, normalizes position/duration/status
+signals, and detects buffering timeout. A Qt timer mirrors core libmpv properties as a
+macOS-safe fallback when python-mpv's native event callbacks are not delivered. The
+backend releases its player on source switch or shutdown.
+
+```text
+AudioPanel -> AudioPlaybackController -> AudioBackendRouter
+                                      -> QtMediaBackend (local Path)
+                                      -> MpvAudioBackend -> yt-dlp -> ephemeral URL
+```
+
+If streaming preparation or playback fails, the router prepares the configured local
+fallback and emits an explicit fallback event before playback continues. If no usable
+fallback exists, only that item becomes ERROR; local music and video remain available.
+Playlist order, repeat behavior, three-second Previous policy, availability, fallback
+status, and video pause reason are domain/media state rather than widget state.
+
+The folder-scoped `youtube_url.json` schema stores only original URLs and optional portable
+fallback paths; it never stores the expiring resolved stream URL. The former version-1/2
+playlist reader remains for data compatibility but is no longer exposed by the Controller UI.
 
 ## PDF pipeline
 
@@ -154,19 +186,22 @@ JSON is renamed with a `.corrupt-<timestamp>` suffix and defaults are returned
 with a non-fatal warning. Subtitle presets use the same policy in a separate JSON
 file. User-edited subtitles remain in memory until Save and are always written
 as UTF-8 without a BOM; blank source lines are intentionally omitted on load and
-save.
+save. Opening or reloading a TXT file uses an explicit Yes/No/Cancel decision:
+Yes saves first, No discards memory changes and continues, and Cancel aborts the
+load.
 
 ## Shutdown
 
-The Controller first asks about unsaved subtitle edits. It then sets both live
+The Controller first asks about unsaved subtitle edits; folder playlist URL changes are already
+saved immediately. It then sets both live
 channels to BLACK, processes pending paint events, closes physical/simulation
 outputs, persists settings, and accepts shutdown. Exceptions are logged to a
 rotating file while the best-effort BLACK/close sequence continues.
 
 ## Extension points
 
-libmpv, individual audio routing, transition variants, and ATEM commands remain
-adapter extension points. Two different videos can play simultaneously; this
+Individual mpv audio routing, authenticated providers, transition variants, and ATEM
+commands remain adapter extension points. Two different videos can play simultaneously; this
 uses two decoders. Cueing replacement videos can temporarily use up to four
 channel decoders total. Controller/Simulation/physical mirrors reuse decoded
 frames and do not multiply that count.

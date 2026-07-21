@@ -7,6 +7,7 @@ class ContentType(StrEnum):
     """Content kinds understood by output channels."""
 
     BLACK = "black"
+    SOLID_COLOR = "solid_color"
     SUBTITLE_KEY = "subtitle_key"
     PDF_PAGE = "pdf_page"
     VIDEO = "video"
@@ -47,7 +48,9 @@ class PlaybackStatus(StrEnum):
     """Runtime state shared by replaceable media backends."""
 
     UNLOADED = "unloaded"
+    PREPARING = "preparing"
     LOADING = "loading"
+    BUFFERING = "buffering"
     READY = "ready"
     CUE = "cue"
     LIVE_PAUSED = "live_paused"
@@ -72,6 +75,22 @@ class PauseReason(StrEnum):
     NONE = "none"
     USER = "user"
     VIDEO = "video"
+
+
+class AudioSourceType(StrEnum):
+    """Source kinds supported by the background-music router."""
+
+    LOCAL_FILE = "local_file"
+    YOUTUBE = "youtube"
+
+
+class AudioAvailability(StrEnum):
+    """Persistent availability state for a playlist item."""
+
+    READY = "ready"
+    MISSING = "missing"
+    UNAVAILABLE = "unavailable"
+    UNRESOLVED = "unresolved"
 
 
 class TextAlignment(StrEnum):

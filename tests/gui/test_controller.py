@@ -6,7 +6,7 @@ import fitz
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from church_presenter.domain.enums import ChannelRole, ContentType
 from church_presenter.domain.models import (
@@ -14,6 +14,7 @@ from church_presenter.domain.models import (
     Content,
     PreviewPreset,
     ScreenInfo,
+    SubtitleDocument,
     SubtitleStyle,
 )
 from church_presenter.rendering.output_surface import OutputSurface
@@ -622,6 +623,125 @@ def test_keyboard_navigation_does_not_steal_text_edit_keys(qtbot, tmp_path: Path
     window.setFocus()
     qtbot.keyClick(window, Qt.Key.Key_Right)
     assert panel.preview_index == 1
+
+
+def test_subtitle_reload_and_open_continue_when_user_chooses_no(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current = tmp_path / "current.txt"
+    replacement = tmp_path / "replacement.txt"
+    current.write_text("원래 문장\n", encoding="utf-8")
+    replacement.write_text("새 파일 문장\n", encoding="utf-8")
+    window = make_controller(qtbot, tmp_path)
+    panel = window.subtitle_panel
+    assert panel.load_path(current, warn=False)
+
+    panel.document.edit_line(0, "메모리 수정")
+    current.write_text("디스크에서 변경\n", encoding="utf-8")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+    assert panel.reload()
+    assert panel.document.lines == ["디스크에서 변경"]
+    assert not panel.document.is_modified
+
+    panel.document.edit_line(0, "다시 수정")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(replacement), "Text files (*.txt)"),
+    )
+    panel.open_file()
+    assert panel.document.path == replacement.resolve()
+    assert panel.document.lines == ["새 파일 문장"]
+
+
+def test_subtitle_add_inserts_above_selection_and_actions_share_one_row(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    panel = window.subtitle_panel
+    panel.document = SubtitleDocument(lines=["A", "B", "C"], group_size=1)
+    panel.group_spin.setValue(1)
+    panel.preview_index = 1
+    panel._refresh()
+    panel.line_list.setCurrentRow(0)
+
+    qtbot.mouseClick(panel.add_line_button, Qt.MouseButton.LeftButton)
+
+    assert panel.document.lines == ["A", "새 자막", "B", "C"]
+    assert panel.line_list.currentItem().data(Qt.ItemDataRole.UserRole) == 1
+    assert panel.line_edit.text() == "새 자막"
+    buttons = (
+        panel.add_line_button,
+        panel.delete_line_button,
+        panel.move_up_button,
+        panel.move_down_button,
+    )
+    assert len({button.y() for button in buttons}) == 1
+    assert all(button.width() <= 110 for button in buttons)
+    panel.document.is_modified = False
+
+
+def test_subtitle_line_edit_enter_only_commits_without_take(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    panel = window.subtitle_panel
+    panel.document = SubtitleDocument(lines=["수정 전"], group_size=1)
+    panel.preview_index = 0
+    panel._refresh()
+    panel.line_list.setCurrentRow(0)
+    preview = Content.subtitle("수정 전", 0, SubtitleStyle(), "#00FF00")
+    window.set_preview(ChannelRole.BROADCAST, preview)
+
+    assert not window.sync_content_check.isChecked()
+    panel.line_edit.setFocus()
+    panel.line_edit.setText("수정 후")
+    qtbot.keyClick(panel.line_edit, Qt.Key.Key_Return)
+    panel.document.is_modified = False
+
+    assert panel.document.lines == ["수정 후"]
+    assert window.state.broadcast.preview_content == preview
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+
+
+def test_blank_screen_presets_prepare_preview_before_take(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    panel = window.black_panel
+    tab_index = window.tabs.indexOf(panel)
+
+    assert window.tabs.tabText(tab_index) == "빈 화면"
+    assert panel.preset_panel.maximumWidth() == 240
+    qtbot.mouseClick(panel.preset_buttons["#00FF00"], Qt.MouseButton.LeftButton)
+    assert window.state.broadcast.preview_content.kind is ContentType.BLACK
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+
+    qtbot.mouseClick(panel.preview_broadcast_button, Qt.MouseButton.LeftButton)
+    preview = window.state.broadcast.preview_content
+    assert preview.kind is ContentType.SOLID_COLOR
+    assert preview.background_color == "#00FF00"
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+
+    qtbot.mouseClick(panel.take_broadcast_button, Qt.MouseButton.LeftButton)
+    assert window.state.broadcast.live_content == preview
+    assert window.broadcast_simulator is not None
+    assert window.broadcast_simulator.surface.target_content == preview
+
+    qtbot.mouseClick(panel.preset_buttons["#0000FF"], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(panel.send_both_button, Qt.MouseButton.LeftButton)
+    assert window.state.broadcast.preview_content == Content.solid_color("#0000FF")
+    assert window.state.venue.preview_content == Content.solid_color("#0000FF")
+    assert window.state.broadcast.live_content == preview
 
 
 def test_close_turns_all_channels_black(qtbot, tmp_path: Path) -> None:

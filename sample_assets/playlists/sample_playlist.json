@@ -1,29 +1,44 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "sample_playlist",
   "current_index": 0,
   "repeat_mode": "none",
   "items": [
     {
-      "item_id": "sample-track-1",
-      "path": "../audio/sample_track_01.wav",
-      "relative": true,
-      "title": "Sample Track 01",
-      "duration_ms": 5000
+      "id": "sample-track-1",
+      "source_type": "local_file",
+      "source": "../audio/sample_track_01.wav",
+      "source_relative": true,
+      "display_title": "Sample Track 01",
+      "duration_ms": 5000,
+      "availability": "ready",
+      "metadata": {},
+      "fallback_path": null,
+      "fallback_relative": false
     },
     {
-      "item_id": "sample-track-2",
-      "path": "../audio/sample_track_02.wav",
-      "relative": true,
-      "title": "Sample Track 02",
-      "duration_ms": 7000
+      "id": "sample-track-2",
+      "source_type": "local_file",
+      "source": "../audio/sample_track_02.wav",
+      "source_relative": true,
+      "display_title": "Sample Track 02",
+      "duration_ms": 7000,
+      "availability": "ready",
+      "metadata": {},
+      "fallback_path": null,
+      "fallback_relative": false
     },
     {
-      "item_id": "sample-track-3",
-      "path": "../audio/sample_track_03.wav",
-      "relative": true,
-      "title": "Sample Track 03",
-      "duration_ms": 9000
+      "id": "sample-track-3",
+      "source_type": "local_file",
+      "source": "../audio/sample_track_03.wav",
+      "source_relative": true,
+      "display_title": "Sample Track 03",
+      "duration_ms": 9000,
+      "availability": "ready",
+      "metadata": {},
+      "fallback_path": null,
+      "fallback_relative": false
     }
   ]
 }

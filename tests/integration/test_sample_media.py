@@ -19,9 +19,11 @@ def test_generated_audio_samples_and_playlist_are_consistent() -> None:
             assert abs(stream.getnframes() / stream.getframerate() - seconds) < 0.01
     playlist_path = SAMPLES / "playlists" / "sample_playlist.json"
     data = json.loads(playlist_path.read_text(encoding="utf-8"))
+    assert data["version"] == 2
     assert len(data["items"]) == 3
     for item in data["items"]:
-        assert (playlist_path.parent / item["path"]).resolve().is_file()
+        assert item["source_type"] == "local_file"
+        assert (playlist_path.parent / item["source"]).resolve().is_file()
 
 
 def test_generated_video_is_a_nonempty_mp4() -> None:
