@@ -782,6 +782,8 @@ def test_linked_navigation_advances_subtitle_and_venue_pdf(qtbot, tmp_path: Path
     qtbot.keyClick(window.sync_next_button, Qt.Key.Key_Right)
     assert window.state.broadcast.preview_content.kind is ContentType.SUBTITLE_KEY
     assert window.state.venue.preview_content.kind is ContentType.PDF_PAGE
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+    assert window.state.venue.live_content.kind is ContentType.BLACK
     qtbot.waitUntil(lambda: window.state.venue.is_ready, timeout=10000)
     qtbot.keyClick(window.sync_next_button, Qt.Key.Key_Return)
     assert window.state.broadcast.live_content.kind is ContentType.SUBTITLE_KEY
@@ -849,9 +851,116 @@ def test_linked_navigation_uses_each_preview_content_type(qtbot, tmp_path: Path)
 def test_sync_checkbox_uses_one_indicator_and_compact_label(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
     assert window.sync_content_check.objectName() == "SyncContentCheck"
+    assert window.sync_auto_take_check.objectName() == "LinkedAutoTakeCheck"
     assert not hasattr(window, "sync_hint")
     assert window.sync_content_check.text() == "동시 진행"
+    assert window.sync_auto_take_check.text() == "바로 Live"
     assert "☐" not in window.sync_content_check.text()
     assert window.sync_take_button.text() == "TAKE BOTH"
+    checkbox_gap = (
+        window.sync_auto_take_check.geometry().left()
+        - window.sync_content_check.geometry().right()
+        - 1
+    )
+    assert checkbox_gap >= 16
     window.sync_content_check.setChecked(True)
     assert window.sync_content_check.text() == "동시 진행"
+
+
+@pytest.mark.parametrize("width,height", [(1920, 1080), (1366, 768)])
+def test_pdf_action_buttons_match_page_move_metrics(
+    qtbot,
+    tmp_path: Path,
+    width: int,
+    height: int,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.resize(width, height)
+    qtbot.wait(20)
+    panel = window.pdf_panel
+    buttons = (
+        panel.go_button,
+        panel.send_both_button,
+        panel.take_button,
+        panel.take_both_button,
+    )
+
+    assert all(button.property("pdfAction") is True for button in buttons)
+    assert len({button.height() for button in buttons}) == 1
+    assert len({button.fontMetrics().height() for button in buttons}) == 1
+    assert panel.send_both_button.property("variant") == "primary"
+    assert panel.take_button.property("variant") == "take"
+    assert panel.take_both_button.property("variant") == "take"
+
+
+def test_linked_auto_take_moves_live_with_page_and_arrow_keys(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "auto-live.pdf"
+    create_pdf(path)
+    window = make_controller(qtbot, tmp_path)
+    panel = window.subtitle_panel
+    panel.document.lines = ["자막 1", "자막 2", "자막 3"]
+    panel.document.group_size = 1
+    panel._refresh()
+    panel.navigate(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.set_target_role(ChannelRole.VENUE)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 3, timeout=5000)
+    qtbot.waitUntil(lambda: window.state.venue.is_ready, timeout=10000)
+    assert window.take_both()
+    assert window.state.broadcast.live_content.subtitle_card_index == 0
+    assert window.state.venue.live_content.pdf_page == 0
+
+    window.sync_content_check.setChecked(True)
+    window.sync_auto_take_check.setChecked(True)
+    window.sync_next_button.setFocus()
+    qtbot.keyClick(window.sync_next_button, Qt.Key.Key_PageDown)
+
+    assert panel.preview_index == 1
+    assert window.pdf_panel.preview_page == 1
+    qtbot.waitUntil(
+        lambda: window.state.broadcast.live_content.subtitle_card_index == 1
+        and window.state.venue.live_content.pdf_page == 1,
+        timeout=10000,
+    )
+
+    qtbot.keyClick(window.sync_next_button, Qt.Key.Key_Up)
+    qtbot.waitUntil(
+        lambda: window.state.broadcast.live_content.subtitle_card_index == 0
+        and window.state.venue.live_content.pdf_page == 0,
+        timeout=10000,
+    )
+
+
+def test_linked_auto_take_render_failure_preserves_live(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "failed.pdf"
+    path.write_bytes(b"pdf marker")
+    window = make_controller(qtbot, tmp_path)
+    window.sync_content_check.setChecked(True)
+    window.sync_auto_take_check.setChecked(True)
+    window.state.set_preview(
+        ChannelRole.BROADCAST,
+        Content.subtitle("다음", 0, SubtitleStyle(), "#00FF00"),
+    )
+    window.state.set_preview(ChannelRole.VENUE, Content.pdf(path, 0), ready=False)
+    before = (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    )
+
+    window._queue_linked_auto_take()
+    assert window._linked_auto_take_pending
+    window.mark_preview_ready(ChannelRole.VENUE, False, "렌더 실패")
+
+    assert not window._linked_auto_take_pending
+    assert (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    ) == before
+    assert "바로 Live 취소" in window.status.text()

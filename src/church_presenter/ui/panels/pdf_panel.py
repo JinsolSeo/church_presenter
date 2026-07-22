@@ -213,6 +213,13 @@ class PdfPanel(QWidget):
         self.take_both_button = QPushButton("TAKE BOTH")
         self.take_button.setProperty("variant", "take")
         self.take_both_button.setProperty("variant", "take")
+        for action_button in (
+            self.go_button,
+            self.send_both_button,
+            self.take_button,
+            self.take_both_button,
+        ):
+            action_button.setProperty("pdfAction", True)
         self.page_controls_widget = QWidget()
         self.page_controls_layout = QHBoxLayout(self.page_controls_widget)
         self.page_controls_layout.setContentsMargins(0, 0, 0, 0)

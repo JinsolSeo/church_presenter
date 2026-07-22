@@ -242,6 +242,8 @@ class ControllerWindow(QMainWindow):
         self.venue_simulator: SimulationWindow | None = None
         self._closing = False
         self._ui_density = ""
+        self._linked_auto_take_pending = False
+        self._linked_auto_take_snapshot: tuple[Content, Content] | None = None
         self.setWindowTitle("Church Presenter")
         self.setMinimumSize(CONTROLLER_MINIMUM_SIZE)
         self.resize(CONTROLLER_DEFAULT_SIZE)
@@ -386,8 +388,8 @@ class ControllerWindow(QMainWindow):
         self.sync_bar.setObjectName("SyncControl")
         self.sync_bar.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.sync_bar.setToolTip(
-            "이 영역에 포커스가 있으면 Left/Right로 Preview를 함께 이동하고 "
-            "Enter로 TAKE BOTH를 실행합니다."
+            "이 영역에 포커스가 있으면 화살표 또는 PageUp/PageDown으로 함께 이동하고 "
+            "Enter로 TAKE BOTH를 실행합니다. 바로 Live가 켜지면 이동 후 자동 TAKE합니다."
         )
         sync_layout = QHBoxLayout(self.sync_bar)
         self.sync_layout = sync_layout
@@ -398,6 +400,14 @@ class ControllerWindow(QMainWindow):
         self.sync_content_check = QCheckBox("동시 진행")
         self.sync_content_check.setObjectName("SyncContentCheck")
         self.sync_content_check.setChecked(self.settings.subtitle_pdf_linked)
+        self.sync_auto_take_check = QCheckBox("바로 Live")
+        self.sync_auto_take_check.setObjectName("LinkedAutoTakeCheck")
+        self.sync_auto_take_check.setChecked(
+            self.settings.linked_navigation_auto_take
+        )
+        self.sync_auto_take_check.setToolTip(
+            "이전/다음 입력 후 두 Preview가 준비되면 TAKE BOTH를 자동 실행합니다."
+        )
         self.sync_previous_button = QPushButton("◀ 함께 이전")
         self.sync_previous_button.setProperty("variant", "ghost")
         self.sync_next_button = QPushButton("함께 다음 ▶")
@@ -407,8 +417,10 @@ class ControllerWindow(QMainWindow):
         self.sync_take_button.setProperty("variant", "take")
         sync_layout.addWidget(sync_title)
         sync_layout.addStretch()
+        sync_layout.addWidget(self.sync_content_check)
+        sync_layout.addSpacing(16)
         sync_widgets: tuple[QWidget, ...] = (
-            self.sync_content_check,
+            self.sync_auto_take_check,
             self.sync_previous_button,
             self.sync_next_button,
             self.sync_take_button,
@@ -731,6 +743,7 @@ class ControllerWindow(QMainWindow):
         self.coordinator.rendered.connect(self._preview_preset_pdf_rendered)
         self.screen_service.screens_changed.connect(self._screens_changed)
         self.sync_content_check.toggled.connect(self._linked_navigation_toggled)
+        self.sync_auto_take_check.toggled.connect(self._linked_auto_take_toggled)
         self.sync_previous_button.clicked.connect(lambda: self.move_linked_previews(-1))
         self.sync_next_button.clicked.connect(lambda: self.move_linked_previews(1))
         self.sync_take_button.clicked.connect(self.take_linked_previews)
@@ -747,6 +760,7 @@ class ControllerWindow(QMainWindow):
             self.save_preview_preset_file_as
         )
         self._linked_navigation_toggled(self.sync_content_check.isChecked())
+        self._linked_auto_take_toggled(self.sync_auto_take_check.isChecked())
 
     def _restore_content(self) -> None:
         last_subtitle = (
@@ -794,6 +808,16 @@ class ControllerWindow(QMainWindow):
         if not ready:
             self.status.setText(f"{channel_label(role)} Preview 준비 중 · 기존 Live 유지")
         self._refresh_channel(role)
+        if (
+            self._linked_auto_take_pending
+            and self._linked_auto_take_snapshot is not None
+            and (
+                self.state.broadcast.preview_content,
+                self.state.venue.preview_content,
+            )
+            != self._linked_auto_take_snapshot
+        ):
+            self._cancel_linked_auto_take()
 
     def mark_preview_ready(
         self,
@@ -809,6 +833,13 @@ class ControllerWindow(QMainWindow):
             else f"{channel_label(role)} Preview 오류: {error}"
         )
         self._refresh_channel(role)
+        if self._linked_auto_take_pending:
+            if not ready:
+                self._cancel_linked_auto_take(
+                    f"바로 Live 취소 · {channel_label(role)} Preview 오류: {error}"
+                )
+            else:
+                self._try_linked_auto_take()
 
     def save_preview_preset(self, name: str) -> bool:
         """Save or overwrite the current two-channel Preview snapshot."""
@@ -1235,6 +1266,7 @@ class ControllerWindow(QMainWindow):
         return self.take_both()
 
     def take(self, role: ChannelRole | str) -> bool:
+        self._cancel_linked_auto_take()
         role = self._normalize_role(role)
         next_content = self.state.channel(role).preview_content
         previous_live = self.state.channel(role).live_content
@@ -1277,6 +1309,7 @@ class ControllerWindow(QMainWindow):
         return True
 
     def take_both(self) -> bool:
+        self._cancel_linked_auto_take()
         previous = {
             ChannelRole.BROADCAST: self.state.broadcast.live_content,
             ChannelRole.VENUE: self.state.venue.live_content,
@@ -1349,6 +1382,18 @@ class ControllerWindow(QMainWindow):
             self.status.setText(
                 "동시 진행 영역에 포커스를 두면 방향키로 각 Preview 콘텐츠를 함께 준비합니다."
             )
+        else:
+            self._cancel_linked_auto_take()
+
+    def _linked_auto_take_toggled(self, enabled: bool) -> None:
+        self.settings.linked_navigation_auto_take = enabled
+        if not enabled:
+            self._cancel_linked_auto_take()
+            return
+        self.status.setText(
+            "바로 Live 활성화 · Left/Right 또는 PageUp/PageDown 입력 후 "
+            "준비가 끝나면 TAKE BOTH를 자동 실행합니다."
+        )
 
     def _pdf_link_mode_changed(self, enabled: bool) -> None:
         self.settings.pdf_link_outputs = enabled
@@ -1370,9 +1415,11 @@ class ControllerWindow(QMainWindow):
         if pdf_roles:
             self.pdf_panel.move_preview_for_roles(offset, pdf_roles)
         if not subtitle_active and not pdf_roles:
+            self._cancel_linked_auto_take()
             self.status.setText("함께 이동할 자막 또는 PDF가 송출/현장 Preview에 없습니다.")
             return
         self._show_linked_position()
+        self._queue_linked_auto_take()
 
     def first_linked_previews(self) -> None:
         if not self.sync_content_check.isChecked():
@@ -1398,6 +1445,47 @@ class ControllerWindow(QMainWindow):
         if not self.sync_content_check.isChecked():
             self.sync_content_check.setChecked(True)
         return self.take_both()
+
+    def _queue_linked_auto_take(self) -> None:
+        if not self.sync_auto_take_check.isChecked():
+            self._cancel_linked_auto_take()
+            return
+        self._linked_auto_take_pending = True
+        self._linked_auto_take_snapshot = (
+            self.state.broadcast.preview_content,
+            self.state.venue.preview_content,
+        )
+        self._try_linked_auto_take()
+
+    def _try_linked_auto_take(self) -> None:
+        if not self._linked_auto_take_pending:
+            return
+        snapshot = self._linked_auto_take_snapshot
+        current = (
+            self.state.broadcast.preview_content,
+            self.state.venue.preview_content,
+        )
+        if (
+            not self.sync_auto_take_check.isChecked()
+            or not self.sync_content_check.isChecked()
+            or snapshot is None
+            or current != snapshot
+        ):
+            self._cancel_linked_auto_take()
+            return
+        if not self.state.broadcast.is_ready or not self.state.venue.is_ready:
+            self.status.setText("바로 Live 대기 · 두 Preview를 준비하고 있습니다.")
+            return
+        self._linked_auto_take_pending = False
+        self._linked_auto_take_snapshot = None
+        self.take_both()
+
+    def _cancel_linked_auto_take(self, message: str = "") -> None:
+        was_pending = self._linked_auto_take_pending
+        self._linked_auto_take_pending = False
+        self._linked_auto_take_snapshot = None
+        if message and was_pending:
+            self.status.setText(message)
 
     def _linked_preview_targets(self) -> tuple[bool, tuple[ChannelRole, ...]]:
         subtitle_active = self.state.broadcast.preview_content.kind is ContentType.SUBTITLE_KEY
@@ -1942,9 +2030,9 @@ class ControllerWindow(QMainWindow):
             return False
         key = event.key()
         if area == "linked":
-            if key == Qt.Key.Key_Left:
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_PageUp):
                 self.move_linked_previews(-1)
-            elif key == Qt.Key.Key_Right:
+            elif key in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown):
                 self.move_linked_previews(1)
             elif key == Qt.Key.Key_Home:
                 self.first_linked_previews()

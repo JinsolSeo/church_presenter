@@ -28,6 +28,8 @@
 - [ ] 동일 영상 Send to Both / TAKE BOTH
 - [ ] 한쪽 Cue 실패 시 양쪽 기존 Live 유지
 - [ ] BLACK/PDF/VIDEO 고정 250ms Fade
+- [ ] 동시 진행 `바로 Live` 활성화 후 화살표와 PageUp/PageDown으로 준비 완료 시 자동 TAKE BOTH
+- [ ] `바로 Live` 중 PDF 준비 실패 시 양쪽 기존 Live 유지
 
 ## 배경음악
 

@@ -42,6 +42,11 @@ that preview and commits it to `live_content` only when ready. `take_both()`
 validates both channels before changing either, preserving both old live values
 on any failure. Venue validation rejects subtitle content.
 
+Linked subtitle/PDF navigation can optionally queue an automatic `take_both()`.
+The queue snapshots both new Preview descriptors and commits only after both channel
+readiness flags become true. A render error, disabled option, disabled linked mode,
+or any later Preview change cancels the queue, preserving both previous Live values.
+
 BLACK is the initial and shutdown-safe content. Screen removal also moves the
 affected live channel to BLACK while leaving the application running. Operator-selected
 chroma blanks use a separate `SOLID_COLOR` snapshot, so choosing a color never weakens

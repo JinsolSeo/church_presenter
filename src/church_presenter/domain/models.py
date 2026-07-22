@@ -590,6 +590,7 @@ class AppSettings:
     pdf_page_orders: dict[str, list[int]] = field(default_factory=dict)
     pdf_link_outputs: bool = False
     subtitle_pdf_linked: bool = False
+    linked_navigation_auto_take: bool = False
     current_style_preset: str = "Lower Third"
     key_color: str = "#00FF00"
     fade_duration_ms: int = 250

@@ -22,6 +22,7 @@ def test_settings_round_trip(tmp_path: Path) -> None:
         last_pdf_page=7,
         pdf_page_orders={"/portable/path/service.pdf": [2, 0, 1]},
         pdf_link_outputs=True,
+        linked_navigation_auto_take=True,
         preview_preset_file="/portable/path/sunday-order.json",
         key_color="#0000FF",
         video_folder="/portable/videos",

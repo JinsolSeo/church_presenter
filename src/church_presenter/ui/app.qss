@@ -210,6 +210,13 @@ QPushButton[variant="take"][heightRole="standard"] {
     font-size: {{font_size}}px;
 }
 
+QPushButton[pdfAction="true"] {
+    min-height: {{button_height}}px;
+    max-height: {{button_height}}px;
+    padding: 0 {{md}}px;
+    font-size: {{font_size}}px;
+}
+
 QFrame#VideoControlPanel QPushButton {
     min-height: {{compact_button_height}}px;
     max-height: {{compact_button_height}}px;
@@ -481,6 +488,14 @@ QMainWindow#ControllerWindow[uiDensity="compact"] QPushButton[variant="take"] {
 QMainWindow#ControllerWindow[uiDensity="compact"]
 QPushButton[variant="take"][heightRole="standard"] {
     min-height: {{compact_button_height}}px;
+    font-size: {{compact_font_size}}px;
+}
+
+QMainWindow#ControllerWindow[uiDensity="compact"]
+QPushButton[pdfAction="true"] {
+    min-height: {{compact_button_height}}px;
+    max-height: {{compact_button_height}}px;
+    padding: 0 {{compact_md}}px;
     font-size: {{compact_font_size}}px;
 }
 
