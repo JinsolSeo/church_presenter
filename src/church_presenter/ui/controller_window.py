@@ -459,7 +459,7 @@ class ControllerWindow(QMainWindow):
         sync_layout.addWidget(self.sync_title)
         sync_layout.addStretch()
         sync_layout.addWidget(self.sync_content_check)
-        sync_layout.addSpacing(16)
+        sync_layout.addSpacing(20)
         sync_widgets: tuple[QWidget, ...] = (
             self.sync_auto_take_check,
             self.sync_previous_button,
@@ -1572,6 +1572,7 @@ class ControllerWindow(QMainWindow):
             self.subtitle_panel.subtitle_style,
             self.subtitle_panel.key_color,
             self.settings.current_style_preset,
+            self.subtitle_panel.document.group_size,
             self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1579,6 +1580,7 @@ class ControllerWindow(QMainWindow):
         self.subtitle_style = dialog.result_style
         self.settings.key_color = dialog.result_key_color
         self.settings.current_style_preset = dialog.result_preset
+        self.subtitle_panel.set_group_size(dialog.result_group_size)
         self.subtitle_panel.set_style(dialog.result_style, dialog.result_key_color)
         self.status.setText(
             "자막 스타일을 송출 Preview에 적용했습니다. Live는 변경되지 않았습니다."

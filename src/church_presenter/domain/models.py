@@ -306,16 +306,12 @@ class SubtitleDocument:
 
     def edit_line(self, index: int, text: str) -> None:
         cleaned = text.strip()
-        if not cleaned:
-            raise ValueError("subtitle lines cannot be blank")
         if self.lines[index] != cleaned:
             self.lines[index] = cleaned
             self.is_modified = True
 
     def add_line(self, text: str, index: int | None = None) -> int:
         cleaned = text.strip()
-        if not cleaned:
-            raise ValueError("subtitle lines cannot be blank")
         target = len(self.lines) if index is None else index
         self.lines.insert(target, cleaned)
         self.is_modified = True

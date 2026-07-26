@@ -700,7 +700,7 @@ def test_subtitle_add_inserts_above_selection_and_actions_share_one_row(
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
     panel.document = SubtitleDocument(lines=["A", "B", "C"], group_size=1)
-    panel.group_spin.setValue(1)
+    panel.set_group_size(1)
     panel.preview_index = 1
     panel._refresh()
     panel.line_list.setCurrentRow(0)

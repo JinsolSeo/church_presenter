@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from church_presenter.domain.models import Content, SubtitleDocument, SubtitleStyle
 from church_presenter.services.subtitle_service import load_subtitle, save_subtitle
+from church_presenter.ui.dialogs.subtitle_merge_dialog import SubtitleMergeDialog
 
 
 class SubtitlePanel(QWidget):
@@ -53,7 +53,7 @@ class SubtitlePanel(QWidget):
         layout = QVBoxLayout(self)
         toolbar = QHBoxLayout()
         self.file_label = QLabel("자막 파일 없음")
-        self.file_label.setMinimumWidth(0)
+        self.file_label.setMinimumWidth(1)
         self.file_label.setSizePolicy(
             QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Preferred,
@@ -63,11 +63,8 @@ class SubtitlePanel(QWidget):
         self.save_button = QPushButton("저장")
         save_as_button = QPushButton("다른 이름으로 저장")
         self.reload_button = QPushButton("다시 불러오기")
-        style_button = QPushButton("Subtitle Style Settings")
-        self.group_spin = QSpinBox()
-        self.group_spin.setRange(1, 8)
-        self.group_spin.setValue(group_size)
-        self.group_spin.setPrefix("그룹 ")
+        style_button = QPushButton("자막 스타일 설정")
+        self.merge_button = QPushButton("자막 합치기")
         for widget in (
             self.file_label,
             self.open_button,
@@ -75,7 +72,7 @@ class SubtitlePanel(QWidget):
             save_as_button,
             self.reload_button,
             style_button,
-            self.group_spin,
+            self.merge_button,
         ):
             toolbar.addWidget(widget)
         toolbar.setStretch(0, 1)
@@ -125,7 +122,7 @@ class SubtitlePanel(QWidget):
         save_as_button.clicked.connect(self.save_as)
         self.reload_button.clicked.connect(self.reload)
         style_button.clicked.connect(self.style_requested)
-        self.group_spin.valueChanged.connect(self._change_group_size)
+        self.merge_button.clicked.connect(self.open_merge_dialog)
         self.card_list.currentRowChanged.connect(self._card_selected)
         self.line_list.currentRowChanged.connect(self._source_selected)
         self.line_edit.returnPressed.connect(self._commit_line_edit)
@@ -161,7 +158,7 @@ class SubtitlePanel(QWidget):
             return False
         source = path.expanduser().resolve()
         try:
-            document = load_subtitle(source, self.group_spin.value())
+            document = load_subtitle(source, self.document.group_size)
         except (OSError, UnicodeError) as error:
             QMessageBox.critical(self, "자막 파일 오류", str(error))
             return False
@@ -185,6 +182,15 @@ class SubtitlePanel(QWidget):
         )
         if selected:
             self.load_path(Path(selected))
+
+    def open_merge_dialog(self) -> None:
+        initial_folder = self.document.path.parent if self.document.path else None
+        dialog = SubtitleMergeDialog(
+            initial_folder,
+            self.document.group_size,
+            self,
+        )
+        dialog.exec()
 
     def save(self) -> bool:
         if self.document.path is None:
@@ -266,7 +272,7 @@ class SubtitlePanel(QWidget):
         self.live_index = self.preview_index
         self._refresh_labels()
 
-    def _change_group_size(self, value: int) -> None:
+    def set_group_size(self, value: int) -> None:
         self.document.set_group_size(value)
         self.live_index = -1
         count = len(self.document.cards)
@@ -291,7 +297,9 @@ class SubtitlePanel(QWidget):
         start = self.preview_index * self.document.group_size
         end = min(start + self.document.group_size, len(self.document.lines))
         for source_index in range(start, end):
-            item = QListWidgetItem(f"{source_index + 1}. {self.document.lines[source_index]}")
+            line = self.document.lines[source_index]
+            label = line if line else "(빈 자막)"
+            item = QListWidgetItem(f"{source_index + 1}. {label}")
             item.setData(Qt.ItemDataRole.UserRole, source_index)
             self.line_list.addItem(item)
 
@@ -369,9 +377,12 @@ class SubtitlePanel(QWidget):
         self.card_list.blockSignals(True)
         self.card_list.clear()
         for index, card in enumerate(self.document.cards):
-            item = QListWidgetItem(card)
+            label = self._card_label(card)
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setSizeHint(item.sizeHint().expandedTo(self.card_list.fontMetrics().size(0, card)))
+            item.setSizeHint(
+                item.sizeHint().expandedTo(self.card_list.fontMetrics().size(0, label))
+            )
             self.card_list.addItem(item)
         self.card_list.setCurrentRow(current)
         self.card_list.blockSignals(False)
@@ -396,7 +407,7 @@ class SubtitlePanel(QWidget):
                 labels.append("PREVIEW")
             card = self.document.cards[index]
             prefix = f"[{' + '.join(labels)}]  " if labels else ""
-            item.setText(prefix + card)
+            item.setText(prefix + self._card_label(card))
             if index == self.live_index:
                 item.setBackground(self._card_live_background)
                 item.setForeground(self._card_active_text)
@@ -410,6 +421,10 @@ class SubtitlePanel(QWidget):
         source = str(self.document.path) if self.document.path else "자막 파일 없음"
         self.file_label.setText(source + modified)
         self.save_button.setEnabled(bool(self.document.lines))
+
+    @staticmethod
+    def _card_label(card: str) -> str:
+        return card if card.strip() else "(빈 자막)"
 
     def _emit_preview(self) -> None:
         cards = self.document.cards

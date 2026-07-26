@@ -7,13 +7,18 @@ from church_presenter.domain.models import SubtitleDocument
 
 
 def parse_subtitle_text(text: str) -> list[str]:
-    """Parse one source subtitle per non-empty line."""
+    """Parse one source subtitle per line while preserving intentional blanks."""
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    return [line.strip() for line in normalized.split("\n") if line.strip()]
+    if not normalized:
+        return []
+    lines = normalized.split("\n")
+    if normalized.endswith("\n"):
+        lines.pop()
+    return [line.strip() for line in lines]
 
 
 def load_subtitle(path: Path, group_size: int = 2) -> SubtitleDocument:
-    """Load UTF-8 or UTF-8-SIG text without preserving blank source lines."""
+    """Load UTF-8 or UTF-8-SIG text and preserve blank source lines."""
     text = path.read_text(encoding="utf-8-sig")
     return SubtitleDocument(path=path, lines=parse_subtitle_text(text), group_size=group_size)
 
@@ -26,7 +31,9 @@ def save_subtitle(document: SubtitleDocument, path: Path | None = None) -> Path:
     destination = destination.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.tmp")
-    payload = "\n".join(line.strip() for line in document.lines if line.strip()) + "\n"
+    payload = "\n".join(line.strip() for line in document.lines)
+    if document.lines:
+        payload += "\n"
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(payload)

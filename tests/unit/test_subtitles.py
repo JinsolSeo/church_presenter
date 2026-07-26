@@ -5,6 +5,11 @@ from pathlib import Path
 import pytest
 
 from church_presenter.domain.models import SubtitleDocument
+from church_presenter.services.subtitle_merge_service import (
+    merge_subtitle_files,
+    padding_count,
+    save_merged_subtitle,
+)
 from church_presenter.services.subtitle_service import (
     load_subtitle,
     parse_subtitle_text,
@@ -12,11 +17,14 @@ from church_presenter.services.subtitle_service import (
 )
 
 
-def test_parse_one_source_per_non_empty_line() -> None:
+def test_parse_one_source_per_line_preserves_intentional_blanks() -> None:
     assert parse_subtitle_text(" first sentence. Second?\n\n 셋째 줄 \r\n") == [
         "first sentence. Second?",
+        "",
         "셋째 줄",
     ]
+    assert parse_subtitle_text("첫 줄\n") == ["첫 줄"]
+    assert parse_subtitle_text("첫 줄\n\n") == ["첫 줄", ""]
 
 
 def test_load_utf8_sig(tmp_path: Path) -> None:
@@ -50,10 +58,13 @@ def test_edit_add_delete_and_move_recompute_cards() -> None:
     assert document.is_modified
 
 
-def test_blank_source_edit_is_rejected() -> None:
+def test_blank_source_edit_and_add_are_allowed() -> None:
     document = SubtitleDocument(lines=["A"])
-    with pytest.raises(ValueError):
-        document.edit_line(0, "  ")
+    document.edit_line(0, "  ")
+    document.add_line("")
+    assert document.lines == ["", ""]
+    assert document.cards == ["\n"]
+    assert document.is_modified
 
 
 def test_save_round_trip_is_utf8_without_bom_and_atomic(tmp_path: Path) -> None:
@@ -66,3 +77,47 @@ def test_save_round_trip_is_utf8_without_bom_and_atomic(tmp_path: Path) -> None:
     assert load_subtitle(path, 1).lines == document.lines
     assert document.is_modified is False
     assert not (tmp_path / ".service.txt.tmp").exists()
+
+
+def test_save_round_trip_preserves_blank_source_lines(tmp_path: Path) -> None:
+    path = tmp_path / "with_blanks.txt"
+    document = SubtitleDocument(lines=["첫 줄", "", "셋째 줄", ""], is_modified=True)
+
+    save_subtitle(document, path)
+
+    assert path.read_text(encoding="utf-8") == "첫 줄\n\n셋째 줄\n\n"
+    assert load_subtitle(path).lines == ["첫 줄", "", "셋째 줄", ""]
+
+
+@pytest.mark.parametrize(
+    ("line_count", "group_size", "expected"),
+    [(5, 2, 1), (6, 2, 0), (4, 3, 2), (5, 3, 1), (6, 3, 0)],
+)
+def test_merge_padding_count(
+    line_count: int,
+    group_size: int,
+    expected: int,
+) -> None:
+    assert padding_count(line_count, group_size) == expected
+
+
+def test_merge_files_pads_boundaries_but_not_the_last_file(tmp_path: Path) -> None:
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    third = tmp_path / "third.txt"
+    first.write_text("A1\nA2\nA3\n", encoding="utf-8")
+    second.write_text("B1\nB2\n", encoding="utf-8")
+    third.write_text("C1\nC2\nC3\n", encoding="utf-8")
+
+    document = merge_subtitle_files([first, second, third], group_size=2)
+
+    assert document.lines == ["A1", "A2", "A3", "", "B1", "B2", "C1", "C2", "C3"]
+    assert document.cards == ["A1\nA2", "A3\n", "B1\nB2", "C1\nC2", "C3"]
+
+
+def test_save_merged_subtitle_rejects_overwriting_a_source(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("A\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="원본 자막 파일"):
+        save_merged_subtitle([source], source, group_size=2)

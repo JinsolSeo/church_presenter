@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +40,7 @@ class SubtitleStyleDialog(QDialog):
         style: SubtitleStyle,
         key_color: str,
         current_preset: str,
+        group_size: int = 2,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -49,6 +51,7 @@ class SubtitleStyleDialog(QDialog):
         self.result_style = style
         self.result_key_color = key_color
         self.result_preset = current_preset
+        self.result_group_size = group_size
         root = QVBoxLayout(self)
         if warning:
             warning_label = QLabel(warning)
@@ -104,7 +107,11 @@ class SubtitleStyleDialog(QDialog):
         self.horizontal_anchor = self._enum_combo(HorizontalAnchor, style.horizontal_anchor)
         self.vertical_anchor = self._enum_combo(VerticalAnchor, style.vertical_anchor)
         self.key_color = ColorButton(key_color)
+        self.group_size = QSpinBox()
+        self.group_size.setRange(1, 8)
+        self.group_size.setValue(group_size)
         rows: tuple[tuple[str, QWidget], ...] = (
+            ("한 번에 표시할 자막 수", self.group_size),
             ("글꼴", self.font_combo),
             ("글자 크기", self.font_size),
             ("글자 색상", self.text_color),
@@ -312,6 +319,7 @@ class SubtitleStyleDialog(QDialog):
         self.result_style = self._style()
         self.result_key_color = self.key_color.color
         self.result_preset = self.preset_combo.currentData()
+        self.result_group_size = self.group_size.value()
         self._preview()
         self.accept()
 
