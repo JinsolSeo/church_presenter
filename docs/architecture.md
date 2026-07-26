@@ -106,9 +106,12 @@ The router sends local files to the existing `QtMediaBackend` and YouTube source
 `MpvAudioBackend`. `YtDlpResolver` validates the public single-video URL and resolves
 metadata or an ephemeral best-audio URL in a bounded worker pool. `MpvAudioBackend`
 initializes libmpv off the UI thread, disables video, normalizes position/duration/status
-signals, and detects buffering timeout. A Qt timer mirrors core libmpv properties as a
-macOS-safe fallback when python-mpv's native event callbacks are not delivered. The
-backend releases its player on source switch or shutdown.
+signals, forwards yt-dlp's HTTP headers and request-size hint, and detects preparation and
+buffering timeouts. On Windows it registers bundled libmpv directories before importing
+python-mpv. It best-effort maps Qt output IDs/descriptions to libmpv device names and falls
+back to the system default when names cannot be matched. A Qt timer mirrors core libmpv
+properties as a macOS-safe fallback when python-mpv's native event callbacks are not
+delivered. The backend releases its player on source switch or shutdown.
 
 ```text
 AudioPanel -> AudioPlaybackController -> AudioBackendRouter

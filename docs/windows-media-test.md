@@ -46,6 +46,8 @@
 - [ ] 영상 종료/Stop/Error 후 음악 자동 재개 안 됨
 - [ ] 공개 단일 YouTube URL 메타데이터 조회
 - [ ] YouTube Play/Pause/Stop/Seek/Previous/Next 및 반복
+- [ ] yt-dlp 응답의 User-Agent/Referer가 libmpv 요청에 전달되고 위치가 증가함
+- [ ] 선택한 USB/HDMI 출력으로 YouTube 오디오가 나오거나 장치 mapping fallback 로그가 남음
 - [ ] PREPARING/BUFFERING/ERROR 상태에서 Controller 응답 유지
 - [ ] 네트워크 차단 시 로컬 fallback 전환 문구와 재생
 - [ ] fallback 없음/삭제 시 항목 오류만 발생하고 로컬 미디어 유지
@@ -54,9 +56,10 @@
 - [ ] 종료 후 libmpv thread/process 잔류 없음
 
 Windows 개발 환경에서는 `python -m pip install -e ".[dev]"`로 Python wrapper와
-yt-dlp를 설치한 뒤, `mpv-2.dll`을 제공하는 libmpv 빌드의 디렉터리를 `PATH`에
-추가합니다. 배포 패키지는 DLL을 실행 파일 옆에 포함하고 대상 PC에서 새 프로세스로
-실행해 로드 여부를 확인합니다. YouTube 검증 전에는
+yt-dlp를 설치한 뒤, `mpv-2.dll`을 제공하는 libmpv 빌드의 디렉터리를 `PATH` 또는
+`CHURCH_PRESENTER_LIBMPV_DIR`의 절대 경로로 지정합니다. 배포 패키지는 DLL과 의존
+DLL을 실행 파일 옆 `libmpv` 폴더에 포함하고 대상 PC에서 새 프로세스로 실행해 로드
+여부를 확인합니다. Python과 libmpv의 32/64비트가 일치해야 합니다. YouTube 검증 전에는
 `python -m pip install --upgrade yt-dlp`로 extractor를 갱신합니다.
 
 ## 운영 안정성

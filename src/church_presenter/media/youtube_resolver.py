@@ -31,6 +31,10 @@ class YouTubeMetadata:
 class ResolvedYouTubeStream:
     stream_url: str
     metadata: YouTubeMetadata
+    http_headers: tuple[tuple[str, str], ...] = ()
+    http_chunk_size: int | None = None
+    protocol: str = ""
+    audio_codec: str = ""
 
 
 def validate_youtube_url(url: str) -> str:
@@ -64,13 +68,33 @@ class YtDlpResolver:
     def stream(self, url: str) -> ResolvedYouTubeStream:
         info = self._extract(url)
         stream_url = info.get("url")
+        selected = info
         if not isinstance(stream_url, str) or not stream_url:
             requested = info.get("requested_downloads")
             if isinstance(requested, list) and requested and isinstance(requested[0], dict):
-                stream_url = requested[0].get("url")
+                selected = requested[0]
+                stream_url = selected.get("url")
         if not isinstance(stream_url, str) or not stream_url:
             raise YouTubeResolverError("YouTube 오디오 스트림을 해석하지 못했습니다.")
-        return ResolvedYouTubeStream(stream_url, self._metadata_from_info(info, url))
+        headers = self._http_headers(selected.get("http_headers") or info.get("http_headers"))
+        downloader_options = selected.get("downloader_options") or info.get(
+            "downloader_options"
+        )
+        chunk_size: int | None = None
+        if isinstance(downloader_options, dict):
+            raw_chunk_size = downloader_options.get("http_chunk_size")
+            if isinstance(raw_chunk_size, int) and raw_chunk_size > 0:
+                chunk_size = raw_chunk_size
+        protocol = selected.get("protocol")
+        audio_codec = selected.get("acodec")
+        return ResolvedYouTubeStream(
+            stream_url,
+            self._metadata_from_info(info, url),
+            http_headers=headers,
+            http_chunk_size=chunk_size,
+            protocol=protocol if isinstance(protocol, str) else "",
+            audio_codec=audio_codec if isinstance(audio_codec, str) else "",
+        )
 
     def _extract(self, url: str) -> dict[str, Any]:
         cleaned = validate_youtube_url(url)
@@ -100,6 +124,29 @@ class YtDlpResolver:
         if not isinstance(info, dict):
             raise YouTubeResolverError("YouTube 응답 형식이 올바르지 않습니다.")
         return info
+
+    @staticmethod
+    def _http_headers(value: object) -> tuple[tuple[str, str], ...]:
+        """Keep yt-dlp playback headers in memory while rejecting header injection."""
+        if not isinstance(value, dict):
+            return ()
+        headers: list[tuple[str, str]] = []
+        for key, header_value in value.items():
+            if not isinstance(key, str) or not isinstance(header_value, str):
+                continue
+            cleaned_key = key.strip()
+            cleaned_value = header_value.strip()
+            if (
+                not cleaned_key
+                or not cleaned_value
+                or "\r" in cleaned_key
+                or "\n" in cleaned_key
+                or "\r" in cleaned_value
+                or "\n" in cleaned_value
+            ):
+                continue
+            headers.append((cleaned_key, cleaned_value))
+        return tuple(headers)
 
     @staticmethod
     def _metadata_from_info(info: dict[str, Any], original_url: str) -> YouTubeMetadata:

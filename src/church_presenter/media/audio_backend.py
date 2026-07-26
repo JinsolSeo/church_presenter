@@ -38,7 +38,7 @@ class StreamingAudioBackend(QObject):
         raise NotImplementedError
 
     def set_audio_output_device(self, device_id: str) -> bool:
-        """Apply a device when supported; mpv uses its system-default device."""
+        """Apply an output device when the backend can map the application ID."""
         raise NotImplementedError
 
     def close(self) -> None:

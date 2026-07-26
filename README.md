@@ -36,7 +36,9 @@ python -m church_presenter
 YouTube 배경음악은 Python 패키지 외에 시스템 `libmpv` runtime이 필요합니다.
 macOS 개발 환경은 `brew install mpv` 후 위 설치 명령을 실행합니다. Windows에서는
 `mpv-2.dll`을 포함한 libmpv 빌드를 설치하고 DLL 디렉터리를 `PATH`에 추가하거나
-패키징한 실행 파일 옆에 배치해야 합니다. `yt-dlp`와 `python-mpv` Python 패키지는
+패키징한 실행 파일 옆의 `libmpv` 폴더에 배치해야 합니다. 다른 위치를 쓰면
+`CHURCH_PRESENTER_LIBMPV_DIR`에 절대 경로를 지정할 수 있습니다. `yt-dlp`와
+`python-mpv` Python 패키지는
 프로젝트 의존성으로 설치됩니다. YouTube extractor 변경 대응이 필요할 때는
 `python -m pip install --upgrade yt-dlp`로 갱신합니다.
 
@@ -71,5 +73,5 @@ Qt Multimedia encoder로 MP4를 생성합니다. 자세한 조작법은
 시행착오는 [`docs/session-handoff.md`](docs/session-handoff.md)에 정리되어 있습니다.
 
 YouTube 영상 출력·검색·playlist import·다운로드, 기타 웹 스트리밍, 카메라 캡처,
-OBS, ATEM 직접 제어, 장치별 mpv 오디오 라우팅은 포함하지 않습니다. YouTube
+OBS, ATEM 직접 제어는 포함하지 않습니다. YouTube
 배경음악은 공개 단일 영상 URL의 오디오 스트림만 실시간으로 해석해 재생합니다.

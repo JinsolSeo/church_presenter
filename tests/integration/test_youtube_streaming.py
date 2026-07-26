@@ -20,6 +20,7 @@ def test_public_youtube_stream_resolves_without_download() -> None:
     result = YtDlpResolver().stream(url)
     assert result.stream_url.startswith(("http://", "https://"))
     assert result.metadata.original_url
+    assert any(name.casefold() == "user-agent" for name, _value in result.http_headers)
 
 
 @pytest.mark.mpv_integration

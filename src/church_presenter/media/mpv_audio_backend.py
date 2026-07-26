@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
+import re
 import sys
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -17,7 +21,66 @@ from church_presenter.media.youtube_resolver import (
 
 LOGGER = logging.getLogger(__name__)
 BUFFERING_TIMEOUT_MS = 15_000
+STREAM_PREPARE_TIMEOUT_MS = 30_000
 MPV_POLL_INTERVAL_MS = 100
+MPV_DLL_NAMES = ("mpv-2.dll", "libmpv-2.dll", "mpv-1.dll")
+AudioDeviceResolver = Callable[[str], object | None]
+_WINDOWS_DLL_DIRECTORY_HANDLES: list[object] = []
+
+
+def _configure_windows_libmpv_search() -> tuple[Path, ...]:
+    """Add trusted application libmpv directories before importing python-mpv."""
+    if sys.platform != "win32":
+        return ()
+    roots: list[Path] = []
+    configured = os.environ.get("CHURCH_PRESENTER_LIBMPV_DIR", "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend(
+        (
+            Path(sys.executable).resolve().parent,
+            Path(__file__).resolve().parent,
+        )
+    )
+    frozen_root = getattr(sys, "_MEIPASS", "")
+    if isinstance(frozen_root, str) and frozen_root:
+        roots.append(Path(frozen_root))
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for candidate in (root, root / "libmpv", root / "mpv"):
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not resolved.is_dir():
+                continue
+            seen.add(resolved)
+            if not any((resolved / name).is_file() for name in MPV_DLL_NAMES):
+                continue
+            found.append(resolved)
+
+    if not found:
+        return ()
+    current_path = os.environ.get("PATH", "")
+    current_entries = {
+        Path(entry).resolve()
+        for entry in current_path.split(os.pathsep)
+        if entry
+    }
+    additions = [str(path) for path in found if path not in current_entries]
+    if additions:
+        os.environ["PATH"] = os.pathsep.join((*additions, current_path))
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if callable(add_dll_directory):
+        for path in found:
+            try:
+                _WINDOWS_DLL_DIRECTORY_HANDLES.append(add_dll_directory(str(path)))
+            except OSError:
+                LOGGER.exception("Could not add bundled libmpv DLL directory: %s", path)
+    LOGGER.info("Configured bundled libmpv search directories: %s", found)
+    return tuple(found)
 
 
 class _MpvInitSignals(QObject):
@@ -33,11 +96,13 @@ class _MpvInitTask(QRunnable):
 
     def run(self) -> None:
         try:
+            bundled_directories = _configure_windows_libmpv_search()
             module = importlib.import_module("mpv")
             options: dict[str, object] = {
                 "video": False,
                 "ytdl": False,
                 "terminal": False,
+                "network_timeout": 15,
                 "input_default_bindings": False,
                 "input_vo_keyboard": False,
             }
@@ -50,12 +115,25 @@ class _MpvInitTask(QRunnable):
                     }
                 )
             player = module.MPV(**options)
-        except (ImportError, OSError):
+            LOGGER.info(
+                "libmpv initialized: platform=%s python_bits=%d bundled_dirs=%d",
+                sys.platform,
+                64 if sys.maxsize > 2**32 else 32,
+                len(bundled_directories),
+            )
+        except (ImportError, OSError) as error:
             LOGGER.exception("libmpv could not be loaded")
+            detail = (
+                f"Windows용 mpv-2.dll을 찾거나 불러오지 못했습니다 "
+                f"({64 if sys.maxsize > 2**32 else 32}비트)."
+                if sys.platform == "win32"
+                else "libmpv runtime을 불러오지 못했습니다."
+            )
             self.signals.failed.emit(
                 self.request_id,
-                "libmpv runtime을 불러오지 못했습니다. 설치 상태를 확인하십시오.",
+                f"{detail} 설치 상태를 확인하십시오.",
             )
+            LOGGER.error("libmpv load detail: %s", error)
             return
         except Exception:
             LOGGER.exception("libmpv initialization failed")
@@ -75,9 +153,15 @@ class MpvAudioBackend(StreamingAudioBackend):
     eof_observed = Signal(str)
     stream_error_observed = Signal(str, str)
 
-    def __init__(self, worker: YouTubeWorkerService | None = None) -> None:
+    def __init__(
+        self,
+        worker: YouTubeWorkerService | None = None,
+        *,
+        audio_device_resolver: AudioDeviceResolver | None = None,
+    ) -> None:
         super().__init__()
         self.worker = worker or YouTubeWorkerService()
+        self._audio_device_resolver = audio_device_resolver
         self.worker.resolved.connect(self._stream_resolved)
         self.worker.failed.connect(self._stream_failed)
         self._init_pool = QThreadPool(self)
@@ -86,9 +170,16 @@ class MpvAudioBackend(StreamingAudioBackend):
         self._status = PlaybackStatus.UNLOADED
         self._request_id = ""
         self._stream_url = ""
+        self._stream_headers: tuple[tuple[str, str], ...] = ()
+        self._stream_http_chunk_size: int | None = None
+        self._stream_protocol = ""
+        self._stream_audio_codec = ""
         self._player: Any | None = None
         self._volume = 0.7
         self._muted = False
+        self._audio_device_id = ""
+        self._audio_device_description = ""
+        self._audio_device_native_id = ""
         self._closed = False
         self._loaded_emitted = False
         self._ended_emitted = False
@@ -102,6 +193,10 @@ class MpvAudioBackend(StreamingAudioBackend):
         self._buffer_timer.setSingleShot(True)
         self._buffer_timer.setInterval(BUFFERING_TIMEOUT_MS)
         self._buffer_timer.timeout.connect(self._buffer_timeout)
+        self._prepare_timer = QTimer(self)
+        self._prepare_timer.setSingleShot(True)
+        self._prepare_timer.setInterval(STREAM_PREPARE_TIMEOUT_MS)
+        self._prepare_timer.timeout.connect(self._prepare_timeout)
         self.buffering_sample.connect(self._apply_buffering)
         self.file_loaded_observed.connect(self._file_loaded)
         self.eof_observed.connect(self._ended)
@@ -119,7 +214,9 @@ class MpvAudioBackend(StreamingAudioBackend):
         self._last_duration_ms = -1
         self._poll_ticks = 0
         self._set_status(PlaybackStatus.PREPARING)
-        self.worker.request_stream(self._request_id, source)
+        self._prepare_timer.start()
+        if not self.worker.request_stream(self._request_id, source):
+            self._emit_error("YouTube 오디오 준비 요청을 시작하지 못했습니다.")
 
     def play(self) -> None:
         if self._player is None:
@@ -144,10 +241,16 @@ class MpvAudioBackend(StreamingAudioBackend):
 
     def stop(self) -> None:
         self._poll_timer.stop()
+        self._prepare_timer.stop()
+        self._buffer_timer.stop()
         if self._request_id:
             self.worker.cancel(self._request_id)
         self._request_id = ""
         self._stream_url = ""
+        self._stream_headers = ()
+        self._stream_http_chunk_size = None
+        self._stream_protocol = ""
+        self._stream_audio_codec = ""
         player, self._player = self._player, None
         if player is not None:
             try:
@@ -176,12 +279,43 @@ class MpvAudioBackend(StreamingAudioBackend):
         self._apply_volume()
 
     def set_audio_output_device(self, device_id: str) -> bool:
-        # Qt device IDs are not portable mpv device names. Phase 1 intentionally
-        # keeps streaming audio on mpv's system-default output.
-        return not device_id
+        self._audio_device_id = device_id
+        self._audio_device_description = ""
+        self._audio_device_native_id = ""
+        if not device_id:
+            if self._player is not None:
+                self._apply_audio_output_device(self._player)
+            return True
+        if self._audio_device_resolver is None:
+            return False
+        device = self._audio_device_resolver(device_id)
+        if device is None:
+            return False
+        is_null = getattr(device, "isNull", None)
+        if callable(is_null) and is_null():
+            return False
+        description = getattr(device, "description", None)
+        if callable(description):
+            self._audio_device_description = str(description() or "")
+        identifier = getattr(device, "id", None)
+        if callable(identifier):
+            raw_identifier = identifier()
+            data = getattr(raw_identifier, "data", None)
+            native_value = data() if callable(data) else raw_identifier
+            if isinstance(native_value, bytes):
+                self._audio_device_native_id = native_value.decode(
+                    "utf-8",
+                    errors="ignore",
+                )
+            else:
+                self._audio_device_native_id = str(native_value or "")
+        if self._player is not None:
+            self._apply_audio_output_device(self._player)
+        return True
 
     def close(self) -> None:
         self._closed = True
+        self._prepare_timer.stop()
         self._buffer_timer.stop()
         self.stop()
         self.worker.close()
@@ -207,6 +341,17 @@ class MpvAudioBackend(StreamingAudioBackend):
             return
         self._set_status(PlaybackStatus.LOADING)
         self._stream_url = result.stream_url
+        self._stream_headers = result.http_headers
+        self._stream_http_chunk_size = result.http_chunk_size
+        self._stream_protocol = result.protocol
+        self._stream_audio_codec = result.audio_codec
+        LOGGER.info(
+            "YouTube audio stream resolved: protocol=%s codec=%s headers=%d chunk_size=%s",
+            self._stream_protocol or "unknown",
+            self._stream_audio_codec or "unknown",
+            len(self._stream_headers),
+            self._stream_http_chunk_size or "default",
+        )
         task = _MpvInitTask(request_id)
         task.signals.succeeded.connect(self._mpv_initialized)
         task.signals.failed.connect(self._mpv_failed)
@@ -246,6 +391,8 @@ class MpvAudioBackend(StreamingAudioBackend):
             mpv_player.register_event_callback(
                 lambda event: self._mpv_event(request_id, event)
             )
+            self._configure_stream_request(mpv_player)
+            self._apply_audio_output_device(mpv_player)
             mpv_player.pause = True
             mpv_player.loadfile(self._stream_url, "replace")
         except Exception:
@@ -320,6 +467,22 @@ class MpvAudioBackend(StreamingAudioBackend):
         if self._status is PlaybackStatus.BUFFERING:
             self._emit_error("YouTube 스트림 버퍼링 시간이 초과되었습니다.")
 
+    def _prepare_timeout(self) -> None:
+        if self._status in {PlaybackStatus.PREPARING, PlaybackStatus.LOADING}:
+            if self._request_id:
+                self.worker.cancel(self._request_id)
+            self._request_id = ""
+            player, self._player = self._player, None
+            if player is not None:
+                try:
+                    player.terminate()
+                except Exception:
+                    LOGGER.exception("Could not terminate timed-out libmpv player")
+            self._emit_error(
+                "YouTube 오디오를 30초 안에 준비하지 못했습니다. "
+                "네트워크와 libmpv 설치 상태를 확인하십시오."
+            )
+
     def _poll_player(self) -> None:
         """Mirror libmpv properties when native callbacks are unavailable.
 
@@ -387,7 +550,14 @@ class MpvAudioBackend(StreamingAudioBackend):
             return
         details = payload.get("event")
         reason = details.get("reason") if isinstance(details, dict) else None
-        if payload.get("error", 0) or reason == 4:
+        nested_error = details.get("error", 0) if isinstance(details, dict) else 0
+        error_code = payload.get("error", 0) or nested_error
+        if error_code or reason in {4, "error"}:
+            LOGGER.warning(
+                "libmpv stream ended with error: reason=%s error=%s",
+                reason,
+                error_code,
+            )
             self.stream_error_observed.emit(
                 request_id,
                 "YouTube 스트림 재생이 중단되었습니다.",
@@ -401,6 +571,7 @@ class MpvAudioBackend(StreamingAudioBackend):
             or self._loaded_emitted
         ):
             return
+        self._prepare_timer.stop()
         self._set_status(PlaybackStatus.READY)
         self._loaded_emitted = True
         self.loaded.emit()
@@ -430,6 +601,119 @@ class MpvAudioBackend(StreamingAudioBackend):
         except Exception:
             LOGGER.exception("Could not apply libmpv volume")
 
+    def _configure_stream_request(self, player: Any) -> None:
+        headers = dict(self._stream_headers)
+        user_agent = self._pop_header(headers, "user-agent")
+        referrer = self._pop_header(headers, "referer")
+        if user_agent:
+            player.user_agent = user_agent
+        if referrer:
+            player.referrer = referrer
+        player.http_header_fields = [
+            f"{name}: {value}" for name, value in headers.items()
+        ]
+        version = getattr(player, "mpv_version_tuple", (0, 0, 0))
+        if (
+            self._stream_http_chunk_size is not None
+            and isinstance(version, tuple)
+            and version >= (0, 41, 0)
+        ):
+            try:
+                player.curl_max_request_size = self._stream_http_chunk_size
+            except Exception:
+                LOGGER.warning(
+                    "libmpv does not support curl-max-request-size; using its default",
+                    exc_info=True,
+                )
+
+    def _apply_audio_output_device(self, player: Any) -> bool:
+        if not self._audio_device_id:
+            player.audio_device = "auto"
+            return True
+        devices = getattr(player, "audio_device_list", None)
+        selected = self._match_audio_device(
+            devices,
+            self._audio_device_description,
+            self._audio_device_native_id,
+        )
+        if selected is None:
+            player.audio_device = "auto"
+            LOGGER.warning(
+                "Could not map Qt audio output to libmpv; using system default: %s",
+                self._audio_device_description or self._audio_device_id,
+            )
+            return False
+        player.audio_device = selected
+        LOGGER.info(
+            "Applied libmpv audio output: description=%s mpv_name=%s",
+            self._audio_device_description,
+            selected,
+        )
+        return True
+
+    @staticmethod
+    def _match_audio_device(
+        devices: object,
+        description: str,
+        native_id: str,
+    ) -> str | None:
+        if not isinstance(devices, list):
+            return None
+        normalized_description = MpvAudioBackend._normalized_device_text(description)
+        native_casefold = native_id.casefold()
+        native_guids = {
+            value.casefold()
+            for value in re.findall(r"\{[0-9a-fA-F-]{32,38}\}", native_id)
+        }
+        best: tuple[int, str] | None = None
+        for item in devices:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            candidate_description = item.get("description")
+            if not isinstance(name, str) or not name or name == "auto":
+                continue
+            description_text = (
+                candidate_description if isinstance(candidate_description, str) else ""
+            )
+            candidate_name = name.casefold()
+            candidate_normalized = MpvAudioBackend._normalized_device_text(
+                description_text
+            )
+            score = 0
+            if native_casefold and native_casefold == candidate_name:
+                score = 120
+            elif native_casefold and native_casefold in candidate_name:
+                score = 110
+            elif native_guids and any(guid in candidate_name for guid in native_guids):
+                score = 105
+            elif (
+                normalized_description
+                and normalized_description == candidate_normalized
+            ):
+                score = 100
+            elif (
+                normalized_description
+                and candidate_normalized
+                and (
+                    normalized_description in candidate_normalized
+                    or candidate_normalized in normalized_description
+                )
+            ):
+                score = 80
+            if score and (best is None or score > best[0]):
+                best = (score, name)
+        return best[1] if best is not None else None
+
+    @staticmethod
+    def _normalized_device_text(value: str) -> str:
+        return re.sub(r"[^0-9a-z가-힣]+", "", value.casefold())
+
+    @staticmethod
+    def _pop_header(headers: dict[str, str], target: str) -> str:
+        key = next((name for name in headers if name.casefold() == target), None)
+        return headers.pop(key) if key is not None else ""
+
     def _set_status(self, status: PlaybackStatus) -> None:
         if status is self._status:
             return
@@ -439,5 +723,8 @@ class MpvAudioBackend(StreamingAudioBackend):
         self.status_changed.emit(status)
 
     def _emit_error(self, message: str) -> None:
+        self._prepare_timer.stop()
+        self._buffer_timer.stop()
+        self._poll_timer.stop()
         self._set_status(PlaybackStatus.ERROR)
         self.error_occurred.emit(message)

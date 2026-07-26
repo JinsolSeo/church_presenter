@@ -60,9 +60,11 @@ URL 추가 시 yt-dlp 메타데이터 조회를 worker에서 실행하고 제목
 
 Play 또는 Prepare 시 yt-dlp가 best-audio 스트림을 다시 해석하고 오디오 전용 libmpv에
 전달합니다. 해석된 URL은 만료될 수 있으므로 메모리에서만 사용하며 JSON에 저장하거나
-영구 캐시하지 않습니다. PREPARING, LOADING, PLAYING, PAUSED, BUFFERING, ENDED와 ERROR는
-Qt 로컬 backend와 같은 공통 상태로 UI에 전달됩니다. 15초 이상 buffering이 계속되거나
-재생 도중 스트림이 끊기면 오류로 처리합니다.
+영구 캐시하지 않습니다. URL과 함께 yt-dlp가 반환한 User-Agent, Referer와 기타 HTTP
+헤더를 libmpv에 전달하고, 지원되는 libmpv에서는 권장 HTTP 요청 크기도 적용합니다.
+PREPARING, LOADING, PLAYING, PAUSED, BUFFERING, ENDED와 ERROR는 Qt 로컬 backend와
+같은 공통 상태로 UI에 전달됩니다. 준비가 30초를 넘거나, 15초 이상 buffering이
+계속되거나, 재생 도중 스트림이 끊기면 오류로 처리합니다.
 
 macOS에서는 python-mpv의 native event callback이 전달되지 않는 환경이 있어 libmpv
 property를 Qt 메인 스레드의 짧은 타이머로 함께 확인합니다. 이벤트와 폴링은 같은 상태
@@ -76,15 +78,17 @@ fallback도 없거나 재생할 수 없으면 항목은 ERROR로 남습니다. �
 
 Python 의존성은 `yt-dlp`와 `python-mpv`이며, 후자는 별도 시스템 libmpv를 필요로
 합니다. macOS는 `brew install mpv`, Windows는 `mpv-2.dll`을 포함한 libmpv 빌드를
-설치한 뒤 DLL 디렉터리를 `PATH`에 추가합니다. 패키징 시 DLL 또는 dylib의 위치와
-mpv 라이선스를 별도로 확인해야 합니다. YouTube extractor는 외부 서비스 변경에
+설치합니다. Windows backend는 `CHURCH_PRESENTER_LIBMPV_DIR`, 실행 파일 위치,
+`libmpv`/`mpv` 하위 폴더와 `PATH` 순서로 DLL을 찾습니다. 패키징 시 DLL 또는 dylib의
+위치와 mpv 라이선스를 별도로 확인해야 합니다. YouTube extractor는 외부 서비스 변경에
 영향을 받으므로 운영 전 `python -m pip install --upgrade yt-dlp`와 실제 URL 재생을
 검증하십시오. 다운로드 기능은 제공하지 않으며, 콘텐츠 이용 조건과 재생 권한은
 사용자가 확인해야 합니다.
 
-현재 `화면 / 오디오 설정`의 Qt 장치 ID는 로컬 음악과 영상에 적용됩니다. 이 ID는
-mpv 장치 이름과 호환되지 않으므로 YouTube 오디오는 운영 체제의 시스템 기본 출력
-장치를 사용합니다. YouTube를 사용할 때는 Windows/macOS 기본 출력도 함께 확인하십시오.
+`화면 / 오디오 설정`의 출력 장치는 로컬 음악, 영상과 YouTube 오디오에 함께
+적용합니다. YouTube backend는 Qt 장치의 native ID와 설명을 libmpv 장치 목록에
+대조합니다. 운영 체제나 드라이버가 서로 다른 이름을 제공해 안전하게 대응할 수 없으면
+시스템 기본 출력으로 전환하고 로그에 선택 장치와 fallback을 남깁니다.
 
 ## 오류 해결
 
@@ -95,6 +99,9 @@ mpv 장치 이름과 호환되지 않으므로 YouTube 오디오는 운영 체�
   media/playback 상태와 decoder 오류는 애플리케이션 로그에 기록됩니다.
 - 영상은 나오고 소리가 없음: 앱 음소거, 영상 볼륨과 `화면 / 오디오 설정`의 공통
   출력 장치를 확인합니다. 시스템 설정을 따르려면 `시스템 기본 출력`을 선택합니다.
+- YouTube 정보만 나오고 재생되지 않음: 최신 yt-dlp인지 확인하고, Windows에서는
+  `mpv-2.dll`의 비트 수가 Python과 같은지와 `CHURCH_PRESENTER_LIBMPV_DIR` 또는
+  실행 파일 옆 `libmpv` 폴더를 확인합니다. 상세 원인은 애플리케이션 로그에 남습니다.
 - 일부 MKV/MOV/AVI 실패: Windows Media Foundation/Qt FFmpeg backend 및 GPU driver
   차이가 원인일 수 있습니다. 운영용 파일은 권장 MP4로 변환합니다.
 

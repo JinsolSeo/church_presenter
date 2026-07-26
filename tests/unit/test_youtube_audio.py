@@ -13,6 +13,7 @@ from church_presenter.domain.enums import (
     PlaybackStatus,
 )
 from church_presenter.domain.models import AudioPlaylist, PlaylistItem
+from church_presenter.media import mpv_audio_backend
 from church_presenter.media.audio_controller import AudioPlaybackController
 from church_presenter.media.audio_router import AudioBackendRouter
 from church_presenter.media.mock_backend import MockMediaBackend, MockStreamingAudioBackend
@@ -21,6 +22,7 @@ from church_presenter.media.playlist import YOUTUBE_URL_FILENAME, PlaylistServic
 from church_presenter.media.youtube_resolver import (
     ResolvedYouTubeStream,
     YouTubeMetadata,
+    YtDlpResolver,
     validate_youtube_url,
 )
 
@@ -81,6 +83,13 @@ class FakeMpvPlayer:
     def __init__(self) -> None:
         self.pause = True
         self.volume = 100.0
+        self.user_agent = ""
+        self.referrer = ""
+        self.http_header_fields: list[str] = []
+        self.curl_max_request_size = 0
+        self.mpv_version_tuple = (0, 41, 0)
+        self.audio_device = "auto"
+        self.audio_device_list: list[dict[str, str]] = []
         self.loaded_url = ""
         self.path = ""
         self.duration: float | None = None
@@ -119,6 +128,70 @@ def test_validate_single_video_youtube_urls() -> None:
         validate_youtube_url("https://www.youtube.com/playlist?list=abc")
     with pytest.raises(ValueError):
         validate_youtube_url("https://example.com/watch?v=abc")
+
+
+def test_resolver_preserves_stream_request_options(monkeypatch) -> None:
+    resolver = YtDlpResolver()
+    monkeypatch.setattr(
+        resolver,
+        "_extract",
+        lambda _url: {
+            "url": "https://stream.example/audio",
+            "title": "Title",
+            "webpage_url": "https://youtu.be/abc123",
+            "http_headers": {
+                "User-Agent": "Test Browser",
+                "Referer": "https://www.youtube.com/",
+                "Accept-Language": "ko-KR",
+                "Injected": "bad\r\nHeader: value",
+            },
+            "downloader_options": {"http_chunk_size": 10_485_760},
+            "protocol": "https",
+            "acodec": "opus",
+        },
+    )
+
+    result = resolver.stream("https://youtu.be/abc123")
+
+    assert result.stream_url == "https://stream.example/audio"
+    assert result.http_headers == (
+        ("User-Agent", "Test Browser"),
+        ("Referer", "https://www.youtube.com/"),
+        ("Accept-Language", "ko-KR"),
+    )
+    assert result.http_chunk_size == 10_485_760
+    assert result.protocol == "https"
+    assert result.audio_codec == "opus"
+
+
+def test_windows_libmpv_search_registers_configured_directory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    dll_directory = tmp_path / "portable-mpv"
+    dll_directory.mkdir()
+    (dll_directory / "mpv-2.dll").write_bytes(b"test")
+    registered: list[str] = []
+    monkeypatch.setattr(mpv_audio_backend.sys, "platform", "win32")
+    monkeypatch.setenv("CHURCH_PRESENTER_LIBMPV_DIR", str(dll_directory))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(
+        mpv_audio_backend.os,
+        "add_dll_directory",
+        lambda value: registered.append(value) or object(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        mpv_audio_backend,
+        "_WINDOWS_DLL_DIRECTORY_HANDLES",
+        [],
+    )
+
+    found = mpv_audio_backend._configure_windows_libmpv_search()
+
+    assert found == (dll_directory.resolve(),)
+    assert registered == [str(dll_directory.resolve())]
+    assert str(dll_directory.resolve()) in mpv_audio_backend.os.environ["PATH"]
 
 
 def test_version_one_playlist_migrates_to_local_source(tmp_path: Path) -> None:
@@ -354,11 +427,25 @@ def test_mpv_backend_normalizes_loaded_transport_and_callbacks(qtbot) -> None:
     stream = ResolvedYouTubeStream(
         "https://stream.example/audio",
         YouTubeMetadata("Title", 10_000, "abc123", "https://youtu.be/abc123"),
+        http_headers=(
+            ("User-Agent", "Test Browser"),
+            ("Referer", "https://www.youtube.com/"),
+            ("Accept-Language", "ko-KR"),
+        ),
+        http_chunk_size=10_485_760,
+        protocol="https",
+        audio_codec="opus",
     )
     backend._stream_url = stream.stream_url
+    backend._stream_headers = stream.http_headers
+    backend._stream_http_chunk_size = stream.http_chunk_size
     player = FakeMpvPlayer()
     backend._mpv_initialized(request_id, player)
     assert player.loaded_url == stream.stream_url
+    assert player.user_agent == "Test Browser"
+    assert player.referrer == "https://www.youtube.com/"
+    assert player.http_header_fields == ["Accept-Language: ko-KR"]
+    assert player.curl_max_request_size == 10_485_760
     assert callable(player.event_callback)
     player.event_callback(FakeMpvEvent({"event_id": 8}))  # type: ignore[operator]
     assert loaded == [True]
@@ -370,6 +457,61 @@ def test_mpv_backend_normalizes_loaded_transport_and_callbacks(qtbot) -> None:
     backend.close()
     assert player.terminated
     assert worker.closed
+
+
+def test_mpv_backend_maps_qt_output_to_libmpv_device(qtbot) -> None:
+    del qtbot
+
+    class FakeByteArray:
+        def data(self) -> bytes:
+            return b"{01234567-89AB-CDEF-0123-456789ABCDEF}"
+
+    class FakeAudioDevice:
+        def isNull(self) -> bool:
+            return False
+
+        def description(self) -> str:
+            return "USB Audio Device"
+
+        def id(self) -> FakeByteArray:
+            return FakeByteArray()
+
+    worker = FakeStreamWorker()
+    backend = MpvAudioBackend(
+        worker=worker,  # type: ignore[arg-type]
+        audio_device_resolver=lambda _device_id: FakeAudioDevice(),
+    )
+    assert backend.set_audio_output_device("persisted-device-id")
+    player = FakeMpvPlayer()
+    player.audio_device_list = [
+        {"name": "auto", "description": "Autoselect device"},
+        {
+            "name": "wasapi/{01234567-89ab-cdef-0123-456789abcdef}",
+            "description": "Speakers (USB Audio Device)",
+        },
+    ]
+
+    assert backend._apply_audio_output_device(player)
+    assert player.audio_device == "wasapi/{01234567-89ab-cdef-0123-456789abcdef}"
+    backend.close()
+
+
+def test_mpv_backend_prepare_timeout_reports_error(qtbot) -> None:
+    del qtbot
+    worker = FakeStreamWorker()
+    backend = MpvAudioBackend(worker=worker)  # type: ignore[arg-type]
+    errors: list[str] = []
+    backend.error_occurred.connect(errors.append)
+    backend.load("https://youtu.be/abc123")
+    request_id = worker.request_id
+
+    backend._prepare_timeout()
+
+    assert backend.status is PlaybackStatus.ERROR
+    assert errors and "30초" in errors[-1]
+    assert worker.cancelled == request_id
+    assert backend._request_id == ""
+    backend.close()
 
 
 def test_mpv_backend_polling_fallback_emits_ready_progress_and_end(qtbot) -> None:
