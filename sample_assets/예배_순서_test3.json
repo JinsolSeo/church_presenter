@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "document_type": "church_presenter_worship_order",
+  "presets": [
+    {
+      "name": "예배 시작",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 0
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 0
+      }
+    },
+    {
+      "name": "찬양 시작",
+      "broadcast": {
+        "kind": "subtitle_key",
+        "position": 0
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 1
+      }
+    },
+    {
+      "name": "어린이 찬양",
+      "broadcast": {
+        "kind": "video"
+      },
+      "venue": {
+        "kind": "video"
+      }
+    },
+    {
+      "name": "성찬",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 3
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 3
+      }
+    }
+  ]
+}

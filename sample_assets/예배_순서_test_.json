@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "document_type": "church_presenter_worship_order",
+  "presets": [
+    {
+      "name": "1. 예배 시",
+      "broadcast": {
+        "kind": "video"
+      },
+      "venue": {
+        "kind": "black"
+      }
+    }
+  ]
+}

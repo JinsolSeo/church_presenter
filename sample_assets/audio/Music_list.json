@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "name": "새 재생목록",
+  "current_index": 0,
+  "repeat_mode": "none",
+  "items": [
+    {
+      "id": "836c673049554dd99b22e062858aa6f7",
+      "source_type": "youtube",
+      "display_title": "The silence of the night makes you stronger.｜Japanese Lo-fi Night 📼 Chill Beats for Study & Focus",
+      "duration_ms": 10949701,
+      "availability": "ready",
+      "error_message": "",
+      "metadata": {
+        "video_id": "09K79_bD6w0",
+        "original_url": "https://youtu.be/09K79_bD6w0?si=_RtksCTkZqPICXzs"
+      },
+      "source": "https://youtu.be/09K79_bD6w0?si=_RtksCTkZqPICXzs",
+      "source_relative": false,
+      "fallback_path": null,
+      "fallback_relative": false
+    },
+    {
+      "id": "/Users/jinsol.seo/codes/church_presenter/sample_assets/audio/sample_track_01.wav",
+      "source_type": "local_file",
+      "display_title": "sample_track_01",
+      "duration_ms": 5000,
+      "availability": "ready",
+      "error_message": "",
+      "metadata": {},
+      "source": "sample_track_01.wav",
+      "source_relative": true,
+      "fallback_path": null,
+      "fallback_relative": false
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "document_type": "church_presenter_worship_order",
+  "presets": [
+    {
+      "name": "1. test 1",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 0
+      },
+      "venue": {
+        "kind": "black"
+      }
+    },
+    {
+      "name": "2. test2",
+      "broadcast": {
+        "kind": "subtitle_key",
+        "position": 2
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 1
+      }
+    },
+    {
+      "name": "3. test3",
+      "broadcast": {
+        "kind": "video"
+      },
+      "venue": {
+        "kind": "video"
+      }
+    }
+  ]
+}
