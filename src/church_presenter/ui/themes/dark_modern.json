@@ -3,14 +3,14 @@
   "colors": {
     "window_bg": "#171A1F", "surface": "#20242B", "surface_alt": "#272C35", "surface_hover": "#303641",
     "border": "#3A414C", "border_strong": "#596270", "text_primary": "#EDF0F4", "text_secondary": "#AEB6C2",
-    "text_disabled": "#707986", "text_on_accent": "#FFFFFF", "accent": "#2F6FD6", "accent_hover": "#3E7EE8",
-    "accent_pressed": "#2459B6", "accent_soft": "#263A5A", "preview": "#4C8DFF", "preview_soft": "#263A5A",
-    "live": "#D92D20", "live_hover": "#E04438", "live_pressed": "#B42318", "live_soft": "#542A2E",
+    "text_disabled": "#707986", "text_on_accent": "#FFFFFF", "accent": "#2F6FD6", "accent_hover": "#285FBA",
+    "accent_pressed": "#204E9B", "accent_soft": "#263A5A", "preview": "#4C8DFF", "preview_soft": "#263A5A",
+    "live": "#D92D20", "live_hover": "#C6281D", "live_pressed": "#A91F17", "live_soft": "#542A2E",
     "success": "#4CAF78", "warning": "#E1A84B", "danger": "#B93B3B", "selection": "#294B78",
     "focus": "#68A0FF", "disabled_bg": "#2A2F37", "slider_groove": "#424955", "slider_handle": "#EDF0F4",
     "scrollbar_handle": "#5A6472"
   },
-  "metrics": {"control_height": 34, "button_height": 34, "take_button_height": 44, "radius": 6, "panel_radius": 9, "border_width": 1, "monitor_border_width": 3, "icon_size": 16, "scrollbar_width": 10, "compact_control_height": 28, "compact_button_height": 28, "compact_take_button_height": 36, "compact_scrollbar_width": 8},
-  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "compact_xs": 3, "compact_sm": 5, "compact_md": 8},
-  "typography": {"font_family": "", "font_size": 13, "caption_size": 11, "section_title_size": 15, "monitor_title_size": 14, "take_button_size": 15, "page_title_size": 19, "compact_font_size": 11, "compact_caption_size": 10, "compact_section_title_size": 13, "compact_monitor_title_size": 12, "compact_take_button_size": 13, "compact_page_title_size": 17}
+  "metrics": {"control_height": 36, "button_height": 36, "take_button_height": 46, "radius": 6, "panel_radius": 9, "border_width": 1, "monitor_border_width": 3, "icon_size": 17, "scrollbar_width": 11, "compact_control_height": 30, "compact_button_height": 30, "compact_take_button_height": 36, "compact_scrollbar_width": 9},
+  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "compact_xs": 3, "compact_sm": 6, "compact_md": 9},
+  "typography": {"font_family": "", "font_size": 14, "caption_size": 12, "section_title_size": 16, "monitor_title_size": 15, "take_button_size": 16, "page_title_size": 20, "compact_font_size": 12, "compact_caption_size": 11, "compact_section_title_size": 14, "compact_monitor_title_size": 13, "compact_take_button_size": 14, "compact_page_title_size": 18}
 }

@@ -72,6 +72,16 @@ DLL을 실행 파일 옆 `libmpv` 폴더에 포함하고 대상 PC에서 새 프
 - [ ] 앱 종료 후 `church-presenter`/Python 프로세스 잔류 없음
 - [ ] 디스플레이 배율별 Controller 조작 가능
 
+## 원격 조작
+
+- [ ] Windows 방화벽에서 사설 네트워크 수신 연결 허용
+- [ ] Wi-Fi 주소가 Hyper-V/WSL/VPN 가상 주소와 구분되어 표시됨
+- [ ] QR 접속 후 자막/PDF/TAKE/TAKE BOTH 조작
+- [ ] 영상 재생 중 원격 영상 영역에 첫 프레임과 정지 화면 안내 표시
+- [ ] 영상 재생 중에도 원격 버튼·목록·slider 조작 응답 유지
+- [ ] 두 영상 Live 및 두 원격 기기 접속 중 Controller 응답 유지
+- [ ] 서버 시작 직후 연결 종료와 애플리케이션 종료가 2초 이상 멈추지 않음
+
 Qt Multimedia에서 운영 파일의 재생 실패, 오디오만 재생, 부정확한 탐색, 종료 신호
 누락 또는 GPU 호환 문제가 반복되면 파일을 권장 MP4로 재인코딩해 비교합니다. 권장
 파일도 실패하면 로그와 파일의 `ffprobe` 결과를 보존하고 Phase 3 libmpv backend

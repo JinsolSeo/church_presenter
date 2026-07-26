@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#10141c">
+    <title>Church Presenter 원격 제어</title>
+    <link rel="stylesheet" href="/remote.css">
+  </head>
+  <body tabindex="0">
+    <header>
+      <strong>Church Presenter</strong>
+      <span id="status" role="status">연결 중…</span>
+      <span id="zoomLevel" aria-live="polite">맞춤</span>
+      <button id="resetView" type="button">화면 맞춤</button>
+      <button id="keyboard" type="button">키보드</button>
+      <button id="fullscreen" type="button">전체 화면</button>
+    </header>
+    <main id="viewport">
+      <canvas
+        id="screen"
+        width="1600"
+        height="900"
+        aria-label="노트북 Controller 원격 화면"
+      ></canvas>
+    </main>
+    <input id="keyboardCapture" aria-label="원격 키보드 입력" autocomplete="off">
+    <script src="/remote.js"></script>
+  </body>
+</html>

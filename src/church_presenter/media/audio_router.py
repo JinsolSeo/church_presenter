@@ -43,6 +43,9 @@ class AudioBackendRouter(QObject):
         self._using_fallback = False
         if item.source_type is AudioSourceType.LOCAL_FILE:
             if item.path is None or not item.path.is_file():
+                # A rejected source switch must also silence the previously
+                # active track; otherwise status and audible output diverge.
+                self.stop()
                 self.error_occurred.emit("음악 파일을 찾을 수 없습니다.")
                 return
             backend: MediaPlaybackBackend | StreamingAudioBackend = self.local_backend

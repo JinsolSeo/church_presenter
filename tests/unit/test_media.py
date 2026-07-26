@@ -300,6 +300,41 @@ def test_audio_restore_cues_position_without_playing(tmp_path: Path) -> None:
     assert backend.status is PlaybackStatus.READY
 
 
+def test_missing_audio_switch_stops_previous_track_and_reports_selected_item(
+    tmp_path: Path,
+) -> None:
+    playable = media_file(tmp_path / "playable.wav")
+    missing = tmp_path / "missing.wav"
+    backend = MockMediaBackend()
+    controller = AudioPlaybackController(backend)
+    controller.add_paths([playable, missing])
+
+    assert controller.play(0)
+    assert backend.status is PlaybackStatus.PLAYING
+    assert not controller.play(1)
+
+    assert backend.status is PlaybackStatus.STOPPED
+    assert controller.runtime.status is PlaybackStatus.ERROR
+    assert controller.runtime.title == "missing"
+    assert controller.runtime.position_ms == 0
+    assert "찾을 수 없습니다" in controller.runtime.error_message
+
+
+def test_clearing_audio_playlist_removes_stale_runtime_metadata(tmp_path: Path) -> None:
+    track = media_file(tmp_path / "clear-me.wav")
+    controller = AudioPlaybackController(MockMediaBackend())
+    controller.add_paths([track])
+    assert controller.play()
+
+    controller.clear()
+
+    assert controller.runtime.status is PlaybackStatus.STOPPED
+    assert controller.runtime.title == ""
+    assert controller.runtime.source == ""
+    assert controller.runtime.path is None
+    assert controller.runtime.duration_ms == 0
+
+
 def test_shared_audio_output_applies_to_all_video_and_music_backends() -> None:
     manager, video_backends = make_video_manager()
     music_backend = MockMediaBackend()

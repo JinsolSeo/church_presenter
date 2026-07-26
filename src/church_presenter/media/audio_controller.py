@@ -154,6 +154,9 @@ class AudioPlaybackController(QObject):
         self.metadata_service.cancel(removed.item_id)
         if current == index:
             self.stop()
+            self._clear_runtime_item()
+            self.runtime.status = PlaybackStatus.STOPPED
+            self.runtime_changed.emit(self.runtime)
         self.playlist_changed.emit(self.playlist)
 
     def clear(self) -> None:
@@ -161,7 +164,9 @@ class AudioPlaybackController(QObject):
             self.metadata_service.cancel(item.item_id)
         self.stop()
         self.playlist.clear()
+        self._clear_runtime_item()
         self.playlist_changed.emit(self.playlist)
+        self.runtime_changed.emit(self.runtime)
 
     def move(self, source: int, destination: int) -> None:
         self.playlist.move(source, destination)
@@ -175,16 +180,22 @@ class AudioPlaybackController(QObject):
         item = self.playlist.current_item
         if item is None:
             return False
+        self._pending_play = False
+        self._pending_seek_ms = None
+        self._set_runtime_item(item)
         if item.source_type is AudioSourceType.LOCAL_FILE and (
             item.path is None or not item.path.is_file()
         ):
+            # Never leave the previous track audibly playing while the UI reports
+            # that the newly selected (missing) track failed.
+            self.router.stop()
+            self.runtime.position_ms = 0
             self._error("음악 파일을 찾을 수 없습니다.")
             return False
         self.runtime.pause_reason = PauseReason.NONE
         self.runtime.error_message = ""
         self.runtime.status_message = ""
         self.runtime.using_fallback = False
-        self._set_runtime_item(item)
         if self.router.is_prepared(item):
             self.router.play()
         else:
@@ -287,14 +298,7 @@ class AudioPlaybackController(QObject):
         for item in self.playlist.items:
             self.metadata_service.cancel(item.item_id)
         self.playlist = playlist
-        self.runtime.path = None
-        self.runtime.source_type = None
-        self.runtime.source = ""
-        self.runtime.title = ""
-        self.runtime.duration_ms = 0
-        self.runtime.error_message = ""
-        self.runtime.status_message = ""
-        self.runtime.using_fallback = False
+        self._clear_runtime_item()
         self._refresh_unresolved_metadata()
         self.playlist_changed.emit(self.playlist)
         self.runtime_changed.emit(self.runtime)
@@ -433,3 +437,16 @@ class AudioPlaybackController(QObject):
         self.runtime.source = item.source
         self.runtime.title = item.title
         self.runtime.duration_ms = item.duration_ms or 0
+
+    def _clear_runtime_item(self) -> None:
+        """Clear stale track metadata after a playlist source is replaced."""
+        self.runtime.path = None
+        self.runtime.source_type = None
+        self.runtime.source = ""
+        self.runtime.title = ""
+        self.runtime.position_ms = 0
+        self.runtime.duration_ms = 0
+        self.runtime.pause_reason = PauseReason.NONE
+        self.runtime.error_message = ""
+        self.runtime.status_message = ""
+        self.runtime.using_fallback = False

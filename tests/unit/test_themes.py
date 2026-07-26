@@ -8,6 +8,15 @@ from PySide6.QtGui import QPalette
 
 from church_presenter.ui.styles import DEFAULT_THEME_ID, ThemeManager
 
+BUILTIN_THEME_IDS = {
+    "light_professional",
+    "dark_modern",
+    "minimalist_light",
+    "warm_linen",
+    "deep_ocean",
+    "graphite_violet",
+}
+
 
 def _builtin_theme(theme_id: str = DEFAULT_THEME_ID) -> dict[str, object]:
     resource = files("church_presenter.ui").joinpath("themes", f"{theme_id}.json")
@@ -41,13 +50,9 @@ def _contrast(first: str, second: str) -> float:
 def test_builtin_themes_are_discovered_and_apply(qapp) -> None:
     manager = ThemeManager()
 
-    assert {theme.id for theme in manager.available_themes()} == {
-        "light_professional",
-        "dark_modern",
-        "minimalist_light",
-    }
+    assert {theme.id for theme in manager.available_themes()} == BUILTIN_THEME_IDS
 
-    for theme_id in ("light_professional", "dark_modern", "minimalist_light"):
+    for theme_id in BUILTIN_THEME_IDS:
         assert manager.apply_theme(qapp, theme_id) == theme_id
         assert manager.current_theme_id() == theme_id
         assert "{{" not in qapp.styleSheet()
@@ -56,13 +61,21 @@ def test_builtin_themes_are_discovered_and_apply(qapp) -> None:
 
 
 def test_builtin_action_text_meets_normal_text_contrast() -> None:
-    for theme_id in ("light_professional", "dark_modern", "minimalist_light"):
+    for theme_id in BUILTIN_THEME_IDS:
         theme = _builtin_theme(theme_id)
         colors = theme["colors"]
         assert isinstance(colors, dict)
         foreground = colors["text_on_accent"]
         assert isinstance(foreground, str)
-        for token in ("accent", "live", "danger"):
+        for token in (
+            "accent",
+            "accent_hover",
+            "accent_pressed",
+            "live",
+            "live_hover",
+            "live_pressed",
+            "danger",
+        ):
             background = colors[token]
             assert isinstance(background, str)
             assert _contrast(foreground, background) >= 4.5

@@ -1,0 +1,16 @@
+{
+  "meta": {"id": "deep_ocean", "name": "Deep Ocean", "mode": "dark", "version": 1},
+  "colors": {
+    "window_bg": "#0B1517", "surface": "#122024", "surface_alt": "#182A2F", "surface_hover": "#21363C",
+    "border": "#30474D", "border_strong": "#557078", "text_primary": "#ECF4F2", "text_secondary": "#A9BCB8",
+    "text_disabled": "#6F8581", "text_on_accent": "#FFFFFF", "accent": "#0F766E", "accent_hover": "#0D6B64",
+    "accent_pressed": "#0A5C56", "accent_soft": "#183D3B", "preview": "#39C6B3", "preview_soft": "#183D3B",
+    "live": "#B83A32", "live_hover": "#A5312B", "live_pressed": "#8C2924", "live_soft": "#4C2929",
+    "success": "#4FBF83", "warning": "#E0A64A", "danger": "#B42318", "selection": "#24514F",
+    "focus": "#53D6C5", "disabled_bg": "#1B2B2F", "slider_groove": "#3B5359", "slider_handle": "#ECF4F2",
+    "scrollbar_handle": "#587077"
+  },
+  "metrics": {"control_height": 36, "button_height": 36, "take_button_height": 46, "radius": 7, "panel_radius": 10, "border_width": 1, "monitor_border_width": 3, "icon_size": 17, "scrollbar_width": 11, "compact_control_height": 30, "compact_button_height": 30, "compact_take_button_height": 36, "compact_scrollbar_width": 9},
+  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "compact_xs": 3, "compact_sm": 6, "compact_md": 9},
+  "typography": {"font_family": "", "font_size": 14, "caption_size": 12, "section_title_size": 16, "monitor_title_size": 15, "take_button_size": 16, "page_title_size": 20, "compact_font_size": 12, "compact_caption_size": 11, "compact_section_title_size": 14, "compact_monitor_title_size": 13, "compact_take_button_size": 14, "compact_page_title_size": 18}
+}

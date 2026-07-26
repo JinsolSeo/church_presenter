@@ -13,7 +13,8 @@
 
 ## Cue / TAKE / Play
 
-파일 선택은 음소거된 Preview decoder를 시작하고 첫 실제 프레임에서 정지합니다.
+파일을 선택한 뒤 `Preview Cue`를 누르면 음소거된 Preview decoder를 시작하고 첫 실제
+프레임에서 정지합니다. 파일 선택만으로는 decoder나 Preview를 변경하지 않습니다.
 첫 프레임이 준비되기 전에는 TAKE가 비활성/실패 상태이며 기존 Live가 유지됩니다.
 TAKE는 준비된 decoder를 Live 역할로 바꾸지만 재생하지 않습니다. Play만 실제 재생과
 영상 오디오를 시작합니다. Preview에서 다른 파일을 준비해도 기존 Live decoder는

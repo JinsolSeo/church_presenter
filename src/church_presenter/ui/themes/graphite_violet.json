@@ -1,0 +1,16 @@
+{
+  "meta": {"id": "graphite_violet", "name": "Graphite Violet", "mode": "dark", "version": 1},
+  "colors": {
+    "window_bg": "#15141A", "surface": "#201E27", "surface_alt": "#292632", "surface_hover": "#342F40",
+    "border": "#433E50", "border_strong": "#665E76", "text_primary": "#F1EFF5", "text_secondary": "#B7B1C2",
+    "text_disabled": "#7C7588", "text_on_accent": "#FFFFFF", "accent": "#6D3CC7", "accent_hover": "#5D32B1",
+    "accent_pressed": "#4C2994", "accent_soft": "#372B50", "preview": "#A98AF1", "preview_soft": "#372B50",
+    "live": "#B83A32", "live_hover": "#A5312B", "live_pressed": "#8C2924", "live_soft": "#4B292C",
+    "success": "#55B980", "warning": "#D9A441", "danger": "#B42318", "selection": "#463565",
+    "focus": "#B69AF5", "disabled_bg": "#2A2731", "slider_groove": "#4B4557", "slider_handle": "#F1EFF5",
+    "scrollbar_handle": "#655E72"
+  },
+  "metrics": {"control_height": 36, "button_height": 36, "take_button_height": 46, "radius": 7, "panel_radius": 10, "border_width": 1, "monitor_border_width": 3, "icon_size": 17, "scrollbar_width": 11, "compact_control_height": 30, "compact_button_height": 30, "compact_take_button_height": 36, "compact_scrollbar_width": 9},
+  "spacing": {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "compact_xs": 3, "compact_sm": 6, "compact_md": 9},
+  "typography": {"font_family": "", "font_size": 14, "caption_size": 12, "section_title_size": 16, "monitor_title_size": 15, "take_button_size": 16, "page_title_size": 20, "compact_font_size": 12, "compact_caption_size": 11, "compact_section_title_size": 14, "compact_monitor_title_size": 13, "compact_take_button_size": 14, "compact_page_title_size": 18}
+}

@@ -72,6 +72,7 @@ class AudioPanel(QWidget):
         self._track_active_text = QColor(Qt.GlobalColor.white)
         self._highlighted_item_id = ""
         self._last_runtime_notice = ""
+        self._compact_mode = False
         self.library = MediaLibraryCoordinator()
         self.library.scanned.connect(self._scan_finished)
         self._build_ui()
@@ -81,8 +82,10 @@ class AudioPanel(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.root_layout = layout
         toolbar = QHBoxLayout()
-        folder_button = QPushButton("음악 폴더")
+        self.toolbar_layout = toolbar
+        self.folder_button = QPushButton("음악 폴더")
         self.folder_label = QLabel(str(self.folder or "선택되지 않음"))
         self.folder_label.setMinimumWidth(0)
         self.folder_label.setSizePolicy(
@@ -96,13 +99,13 @@ class AudioPanel(QWidget):
         self.sort_combo.setCurrentIndex(0 if self.sort_field is SortField.NAME else 1)
         self.descending_check = QCheckBox("내림차순")
         self.descending_check.setChecked(self.descending)
-        refresh_button = QPushButton("새로고침")
+        self.refresh_button = QPushButton("새로고침")
         for widget in (
-            folder_button,
+            self.folder_button,
             self.folder_label,
             self.sort_combo,
             self.descending_check,
-            refresh_button,
+            self.refresh_button,
         ):
             toolbar.addWidget(widget)
         toolbar.setStretch(1, 1)
@@ -115,7 +118,7 @@ class AudioPanel(QWidget):
         playlist_layout.setContentsMargins(0, 0, 0, 0)
         source_actions = QHBoxLayout()
         self.youtube_add_button = QPushButton("YouTube URL 추가")
-        self.fallback_button = QPushButton("fallback 지정")
+        self.fallback_button = QPushButton("대체 파일 지정")
         self.retry_button = QPushButton("상태 재확인")
         self.remove_youtube_button = QPushButton("URL 삭제")
         for widget in (
@@ -127,9 +130,10 @@ class AudioPanel(QWidget):
             source_actions.addWidget(widget)
         source_actions.addStretch()
         playlist_layout.addLayout(source_actions)
-        playlist_layout.addWidget(
-            QLabel(f"폴더 재생목록 · 로컬 음악 + {YOUTUBE_URL_FILENAME}")
+        self.playlist_caption = QLabel(
+            f"폴더 재생목록 · 로컬 음악 + {YOUTUBE_URL_FILENAME}"
         )
+        playlist_layout.addWidget(self.playlist_caption)
         self.playlist_list = QListWidget()
         self.playlist_list.setObjectName("AudioPlaylistList")
         self.playlist_list.setSelectionMode(
@@ -146,9 +150,24 @@ class AudioPanel(QWidget):
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Expanding,
         )
-        player_layout = QVBoxLayout(self.control_panel)
-        player_layout.setContentsMargins(10, 10, 10, 10)
-        player_layout.setSpacing(6)
+        self.player_layout = QVBoxLayout(self.control_panel)
+        self.player_layout.setContentsMargins(10, 10, 10, 10)
+        self.player_layout.setSpacing(8)
+
+        self.player_title = QLabel("배경음악 제어")
+        self.player_title.setProperty("role", "sectionTitle")
+        self.track_summary_label = QLabel("선택한 곡 없음")
+        self.track_summary_label.setObjectName("AudioTrackSummary")
+        self.track_summary_label.setMinimumWidth(0)
+        self.track_summary_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.playback_summary_label = QLabel("정지")
+        self.playback_summary_label.setProperty("role", "secondary")
+        self.player_layout.addWidget(self.player_title)
+        self.player_layout.addWidget(self.track_summary_label)
+        self.player_layout.addWidget(self.playback_summary_label)
 
         transport = QHBoxLayout()
         self.previous_button = self._transport_button("⏮", "이전 곡")
@@ -165,16 +184,16 @@ class AudioPanel(QWidget):
             self.next_button,
         ):
             transport.addWidget(widget)
-        player_layout.addLayout(transport)
+        self.player_layout.addLayout(transport)
 
         seek_row = QHBoxLayout()
         self.seek_slider = QSlider(Qt.Orientation.Horizontal)
         self.time_label = QLabel("00:00 / 00:00")
         seek_row.addWidget(self.seek_slider, 1)
         seek_row.addWidget(self.time_label)
-        player_layout.addLayout(seek_row)
+        self.player_layout.addLayout(seek_row)
 
-        options = QGridLayout()
+        self.options_layout = QGridLayout()
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(round(self.controller.runtime.volume * 100))
@@ -189,14 +208,17 @@ class AudioPanel(QWidget):
                 self.controller.playlist.repeat_mode
             )
         )
-        options.addWidget(QLabel("볼륨"), 0, 0)
-        options.addWidget(self.volume_slider, 0, 1, 1, 2)
-        options.addWidget(self.mute_check, 0, 3)
-        options.addWidget(self.repeat_combo, 1, 1, 1, 3)
-        options.setColumnStretch(1, 1)
-        player_layout.addLayout(options)
+        self.volume_label = QLabel("볼륨")
+        self.repeat_label = QLabel("반복")
+        self.options_layout.addWidget(self.volume_label, 0, 0)
+        self.options_layout.addWidget(self.volume_slider, 0, 1, 1, 2)
+        self.options_layout.addWidget(self.mute_check, 0, 3)
+        self.options_layout.addWidget(self.repeat_label, 1, 0)
+        self.options_layout.addWidget(self.repeat_combo, 1, 1, 1, 3)
+        self.options_layout.setColumnStretch(1, 1)
+        self.player_layout.addLayout(self.options_layout)
 
-        player_layout.addStretch()
+        self.player_layout.addStretch()
 
         splitter.addWidget(self.playlist_box)
         splitter.addWidget(self.control_panel)
@@ -205,12 +227,12 @@ class AudioPanel(QWidget):
         splitter.setSizes([760, 420])
         layout.addWidget(splitter, 1)
 
-        folder_button.clicked.connect(self.choose_folder)
+        self.folder_button.clicked.connect(self.choose_folder)
         self.youtube_add_button.clicked.connect(self.add_youtube_url)
         self.fallback_button.clicked.connect(self.set_selected_fallback)
         self.retry_button.clicked.connect(self.retry_selected)
         self.remove_youtube_button.clicked.connect(self.remove_selected_youtube)
-        refresh_button.clicked.connect(self.refresh_library)
+        self.refresh_button.clicked.connect(self.refresh_library)
         self.sort_combo.currentIndexChanged.connect(self._sort_changed)
         self.descending_check.toggled.connect(self._sort_changed)
         self.playlist_list.itemDoubleClicked.connect(self._play_item)
@@ -232,12 +254,58 @@ class AudioPanel(QWidget):
         )
         self._runtime_changed(self.controller.runtime)
 
+    def set_compact_mode(self, compact: bool) -> None:
+        """Reflow audio controls for a shallow laptop-sized workspace."""
+        if compact == self._compact_mode:
+            return
+        self._compact_mode = compact
+        self.root_layout.setContentsMargins(*(6, 6, 6, 6) if compact else (9, 9, 9, 9))
+        self.root_layout.setSpacing(6 if compact else 9)
+        self.toolbar_layout.setSpacing(6 if compact else 9)
+        self.control_panel.setMinimumWidth(240 if compact else 300)
+        self.player_layout.setContentsMargins(*(6, 6, 6, 6) if compact else (10, 10, 10, 10))
+        self.player_layout.setSpacing(3 if compact else 8)
+        self.player_title.setVisible(not compact)
+        self.playback_summary_label.setVisible(not compact)
+        self.volume_label.setVisible(not compact)
+        self.repeat_label.setVisible(not compact)
+        self.folder_button.setText("음악 폴더" if not compact else "폴더")
+        self.refresh_button.setText("새로고침" if not compact else "↻")
+        self.youtube_add_button.setText("YouTube URL 추가" if not compact else "+ URL")
+        self.fallback_button.setText("대체 파일 지정" if not compact else "대체")
+        self.retry_button.setText("상태 재확인" if not compact else "재확인")
+        self.remove_youtube_button.setText("URL 삭제" if not compact else "삭제")
+        self.playlist_caption.setText(
+            f"폴더 재생목록 · 로컬 음악 + {YOUTUBE_URL_FILENAME}"
+            if not compact
+            else "폴더 재생목록"
+        )
+        for widget in (
+            self.volume_label,
+            self.volume_slider,
+            self.mute_check,
+            self.repeat_label,
+            self.repeat_combo,
+        ):
+            self.options_layout.removeWidget(widget)
+        if compact:
+            self.options_layout.addWidget(self.volume_slider, 0, 0, 1, 2)
+            self.options_layout.addWidget(self.mute_check, 0, 2)
+            self.options_layout.addWidget(self.repeat_combo, 0, 3)
+        else:
+            self.options_layout.addWidget(self.volume_label, 0, 0)
+            self.options_layout.addWidget(self.volume_slider, 0, 1, 1, 2)
+            self.options_layout.addWidget(self.mute_check, 0, 3)
+            self.options_layout.addWidget(self.repeat_label, 1, 0)
+            self.options_layout.addWidget(self.repeat_combo, 1, 1, 1, 3)
+        self._runtime_changed(self.controller.runtime)
+
     @staticmethod
     def _transport_button(symbol: str, description: str) -> QPushButton:
         button = QPushButton(symbol)
         button.setToolTip(description)
         button.setAccessibleName(description)
-        button.setMinimumWidth(38)
+        button.setMinimumWidth(44)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return button
 
@@ -454,6 +522,27 @@ class AudioPanel(QWidget):
         self.controller.play(row if row >= 0 else None)
 
     def _runtime_changed(self, runtime: AudioPlaybackRuntimeState) -> None:
+        status_labels = {
+            PlaybackStatus.UNLOADED: "준비되지 않음",
+            PlaybackStatus.PREPARING: "스트림 준비 중",
+            PlaybackStatus.LOADING: "불러오는 중",
+            PlaybackStatus.READY: "재생 준비 완료",
+            PlaybackStatus.CUE: "재생 준비 완료",
+            PlaybackStatus.LIVE_PAUSED: "일시정지",
+            PlaybackStatus.PLAYING: "재생 중",
+            PlaybackStatus.PAUSED: "일시정지",
+            PlaybackStatus.BUFFERING: "버퍼링 중",
+            PlaybackStatus.STOPPED: "정지",
+            PlaybackStatus.ENDED: "재생 완료",
+            PlaybackStatus.ERROR: "재생 오류",
+        }
+        status_text = status_labels[runtime.status]
+        title = runtime.title or "선택한 곡 없음"
+        self.track_summary_label.setText(
+            f"{title} · {status_text}" if self._compact_mode else title
+        )
+        self.track_summary_label.setToolTip(runtime.source)
+        self.playback_summary_label.setText(status_text)
         self.seek_slider.setRange(0, max(0, runtime.duration_ms))
         if not self.seek_slider.isSliderDown():
             self.seek_slider.setValue(runtime.position_ms)

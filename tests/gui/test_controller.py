@@ -6,7 +6,7 @@ import fitz
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 
 from church_presenter.domain.enums import ChannelRole, ContentType
 from church_presenter.domain.models import (
@@ -92,7 +92,14 @@ def test_theme_switch_is_persisted_without_changing_preview_or_live(
 
 @pytest.mark.parametrize(
     "theme_id",
-    ["light_professional", "dark_modern", "minimalist_light"],
+    [
+        "light_professional",
+        "dark_modern",
+        "minimalist_light",
+        "warm_linen",
+        "deep_ocean",
+        "graphite_violet",
+    ],
 )
 def test_all_themes_subtitle_cards_use_only_live_and_preview_highlights(
     qtbot,
@@ -160,7 +167,9 @@ def test_monitor_semantics_and_take_variants_are_explicit(qtbot, tmp_path: Path)
     assert window.sync_take_button.property("variant") == "take"
     assert window.pdf_panel.take_button.property("variant") == "take"
     assert window.pdf_panel.take_both_button.property("variant") == "take"
-    assert window.video_panel.take_button.property("variant") == "take"
+    assert window.video_panel.cue_button.property("variant") == "secondary"
+    assert window.video_panel.cue_both_button.property("variant") == "primary"
+    assert window.video_panel.take_button.property("variant") == "secondary"
     assert window.video_panel.take_both_button.property("variant") == "take"
     assert window.video_panel.target_combo.itemText(0) == "송출"
     assert window.video_panel.target_combo.itemText(1) == "현장"
@@ -535,12 +544,36 @@ def test_worship_order_dock_is_not_hidden_or_floated_on_resize(
 
     assert window.preview_preset_dock.isVisible()
     assert not window.preview_preset_dock.isFloating()
+    assert not bool(
+        window.preview_preset_dock.features()
+        & window.preview_preset_dock.DockWidgetFeature.DockWidgetClosable
+    )
 
-    window.preview_preset_dock.hide()
-    qtbot.mouseClick(window.preview_presets_button, Qt.MouseButton.LeftButton)
+    window.preview_preset_dock.close()
+    qtbot.wait(10)
 
     assert window.preview_preset_dock.isVisible()
     assert not window.preview_preset_dock.isFloating()
+
+    window.preview_preset_dock.hide()
+    window._restore_panel_layout()
+    qtbot.wait(10)
+    assert window.preview_preset_dock.isVisible()
+
+
+def test_header_replaces_worship_order_button_with_remote_connection(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    header_texts = {
+        button.text() for button in window.header_actions_widget.findChildren(QPushButton)
+    }
+
+    assert "예배 순서" not in header_texts
+    assert window.remote_connection_button.text() == "원격 연결"
+    assert window.remote_connection_button.property("variant") == "secondary"
+    assert not hasattr(window, "preview_presets_button")
 
 
 def test_workspace_splitter_state_is_restored(qtbot, tmp_path: Path) -> None:

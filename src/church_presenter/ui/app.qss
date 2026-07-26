@@ -40,7 +40,22 @@ QLabel[role="sectionTitle"] {
     font-weight: 700;
 }
 
-QFrame#AppHeader, QFrame#ContentPanel, QFrame#VideoControlPanel {
+QLabel[role="workflowHint"] {
+    color: {{text_secondary}};
+    background-color: {{accent_soft}};
+    border: {{border_width}}px solid {{border}};
+    border-radius: {{radius}}px;
+    padding: {{sm}}px {{md}}px;
+    font-size: {{caption_size}}px;
+    font-weight: 700;
+}
+
+QLabel#AudioTrackSummary {
+    font-weight: 700;
+}
+
+QFrame#AppHeader, QFrame#ContentPanel, QFrame#VideoControlPanel,
+QFrame#AudioControlPanel {
     background-color: {{surface}};
     border: {{border_width}}px solid {{border}};
     border-radius: {{panel_radius}}px;

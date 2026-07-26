@@ -54,6 +54,17 @@ class QtMediaBackend(MediaPlaybackBackend):
 
     def load(self, path: Path) -> None:
         resolved = path.expanduser().resolve()
+        # Invalidate and silence the old source before validating the new one.
+        # Failed source changes must not leave earlier media playing behind an
+        # ERROR state.
+        self._load_generation += 1
+        generation = self._load_generation
+        self._load_pending = False
+        self._source_started = False
+        self._priming_video = False
+        self._accept_video_frames = False
+        self.player.stop()
+        self.player.setSource(QUrl())
         self._path = resolved
         if not resolved.is_file():
             self._emit_error("미디어 파일을 찾을 수 없습니다.")
@@ -61,16 +72,9 @@ class QtMediaBackend(MediaPlaybackBackend):
         if not os.access(resolved, os.R_OK):
             self._emit_error("미디어 파일을 읽을 권한이 없습니다.")
             return
-        self._load_generation += 1
-        generation = self._load_generation
         self._load_pending = True
-        self._source_started = False
-        self._priming_video = False
-        self._accept_video_frames = False
-        self.player.stop()
         # QMediaPlayer may treat setSource() with the current URL as a no-op.
         # Clearing first also flushes decoded frames from the previous cue.
-        self.player.setSource(QUrl())
         self._set_status(PlaybackStatus.LOADING)
         QTimer.singleShot(0, lambda: self._start_source(generation, resolved))
 

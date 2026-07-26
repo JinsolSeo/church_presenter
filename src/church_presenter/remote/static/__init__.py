@@ -1,0 +1,1 @@
+"""Packaged browser client assets."""

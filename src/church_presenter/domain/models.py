@@ -565,8 +565,8 @@ class AppSettings:
     audio_folder: str = ""
     sort_field: SortField = SortField.NAME
     sort_descending: bool = True
-    video_sort_field: SortField = SortField.NAME
-    video_sort_descending: bool = False
+    video_sort_field: SortField = SortField.MODIFIED
+    video_sort_descending: bool = True
     audio_sort_field: SortField = SortField.NAME
     audio_sort_descending: bool = False
     controller_screen_id: str = ""

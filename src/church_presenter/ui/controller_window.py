@@ -42,12 +42,16 @@ from church_presenter.media.mpv_audio_backend import MpvAudioBackend
 from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
+from church_presenter.remote.frame_capture import FrameCaptureService
+from church_presenter.remote.input_dispatcher import RemoteInputDispatcher
+from church_presenter.remote.network_service import RemoteNetworkService
 from church_presenter.rendering.output_surface import AspectRatioContainer, OutputSurface
 from church_presenter.services.audio_device_service import AudioDeviceService
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import ScreenService, validate_role_assignment
 from church_presenter.services.settings_service import SettingsService
 from church_presenter.services.transition_service import FIXED_OUTPUT_FADE_DURATION_MS
+from church_presenter.ui.dialogs.remote_connection_dialog import RemoteConnectionDialog
 from church_presenter.ui.dialogs.screen_settings_dialog import ScreenSettingsDialog
 from church_presenter.ui.dialogs.subtitle_style_dialog import SubtitleStyleDialog
 from church_presenter.ui.labels import channel_label
@@ -151,6 +155,18 @@ class ResponsiveContentTabs(QTabWidget):
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)
+
+
+class PersistentDockWidget(QDockWidget):
+    """A movable/floating dock whose operator content cannot be closed."""
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        parent = self.parentWidget()
+        if parent is not None and bool(getattr(parent, "_closing", False)):
+            event.accept()
+            return
+        event.ignore()
+        self.show()
 
 
 class ControllerWindow(QMainWindow):
@@ -259,6 +275,27 @@ class ControllerWindow(QMainWindow):
             except (ValueError, UnicodeError):
                 LOGGER.exception("Could not restore Controller geometry")
         self._build_ui()
+        self.remote_service = RemoteNetworkService(self)
+        self.frame_capture = FrameCaptureService(
+            self.application,
+            self,
+            excluded=lambda widget: bool(widget.property("remoteConnectionDialog")),
+            parent=self,
+        )
+        self.remote_input_dispatcher = RemoteInputDispatcher(
+            lambda: self.frame_capture.current_target or self,
+            self,
+        )
+        self.remote_connection_dialog: RemoteConnectionDialog | None = None
+        self.remote_service.client_count_changed.connect(
+            self.frame_capture.set_client_count
+        )
+        self.remote_service.input_received.connect(
+            self.remote_input_dispatcher.dispatch,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.remote_service.state_changed.connect(self._remote_state_changed)
+        self.frame_capture.frame_ready.connect(self.remote_service.publish_frame)
         self._connect_signals()
         self.audio_device_service.outputs_changed.connect(self._audio_outputs_changed)
         self.application.installEventFilter(self)
@@ -324,8 +361,8 @@ class ControllerWindow(QMainWindow):
         self.status.setWordWrap(False)
         settings_button = QPushButton("화면 / 오디오 설정")
         settings_button.setProperty("variant", "secondary")
-        self.preview_presets_button = QPushButton("예배 순서")
-        self.preview_presets_button.setProperty("variant", "secondary")
+        self.remote_connection_button = QPushButton("원격 연결")
+        self.remote_connection_button.setProperty("variant", "secondary")
         self.start_outputs_button = QPushButton("출력 시작")
         self.start_outputs_button.setProperty("variant", "primary")
         self.stop_outputs_button = QPushButton("출력 중지")
@@ -350,7 +387,7 @@ class ControllerWindow(QMainWindow):
             appearance_label,
             self.theme_combo,
             settings_button,
-            self.preview_presets_button,
+            self.remote_connection_button,
             self.start_outputs_button,
             self.stop_outputs_button,
         )
@@ -399,8 +436,8 @@ class ControllerWindow(QMainWindow):
         self.sync_layout = sync_layout
         sync_layout.setContentsMargins(14, 10, 14, 10)
         sync_layout.setSpacing(8)
-        sync_title = QLabel("동시 진행")
-        sync_title.setProperty("role", "sectionTitle")
+        self.sync_title = QLabel("연동 제어")
+        self.sync_title.setProperty("role", "sectionTitle")
         self.sync_content_check = QCheckBox("동시 진행")
         self.sync_content_check.setObjectName("SyncContentCheck")
         self.sync_content_check.setChecked(self.settings.subtitle_pdf_linked)
@@ -419,7 +456,7 @@ class ControllerWindow(QMainWindow):
         self.sync_take_button = QPushButton("TAKE BOTH")
         self.sync_take_button.setObjectName("LinkedTakeBoth")
         self.sync_take_button.setProperty("variant", "take")
-        sync_layout.addWidget(sync_title)
+        sync_layout.addWidget(self.sync_title)
         sync_layout.addStretch()
         sync_layout.addWidget(self.sync_content_check)
         sync_layout.addSpacing(16)
@@ -515,7 +552,7 @@ class ControllerWindow(QMainWindow):
         self.preview_preset_panel.set_file_path(
             str(self.preview_preset_file) if self.preview_preset_file else ""
         )
-        self.preview_preset_dock = QDockWidget("예배 순서", self)
+        self.preview_preset_dock = PersistentDockWidget("예배 순서", self)
         self.preview_preset_dock.setObjectName("PreviewPresetDock")
         self.preview_preset_dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
@@ -527,9 +564,12 @@ class ControllerWindow(QMainWindow):
         self.preview_preset_dock.setWidget(self.preview_preset_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_preset_dock)
         self.preview_preset_dock.visibilityChanged.connect(self._schedule_scroll_fit)
+        self.preview_preset_dock.visibilityChanged.connect(
+            self._preview_preset_visibility_changed
+        )
 
         settings_button.clicked.connect(self.open_screen_settings)
-        self.preview_presets_button.clicked.connect(self._show_preview_preset_panel)
+        self.remote_connection_button.clicked.connect(self._show_remote_connection)
         self.start_outputs_button.clicked.connect(self.start_outputs)
         self.stop_outputs_button.clicked.connect(self.stop_outputs)
         self.theme_combo.currentIndexChanged.connect(self._theme_selected)
@@ -537,6 +577,17 @@ class ControllerWindow(QMainWindow):
     def _schedule_scroll_fit(self, _visible: bool) -> None:
         """Settle dock-driven central geometry within the same event-loop cycle."""
         QTimer.singleShot(0, self._fit_scroll_content)
+
+    def _preview_preset_visibility_changed(self, visible: bool) -> None:
+        if not visible and not self._closing and self.isVisible():
+            QTimer.singleShot(0, self._enforce_preview_preset_dock_visible)
+
+    def _enforce_preview_preset_dock_visible(self) -> None:
+        """Override restored/programmatic hidden states for the worship-order dock."""
+        if self._closing:
+            return
+        self.preview_preset_dock.show()
+        self.preview_preset_dock.setVisible(True)
 
     def _fit_scroll_content(self) -> None:
         root = self.root_scroll.widget()
@@ -579,12 +630,13 @@ class ControllerWindow(QMainWindow):
             or size.height() <= COMPACT_DENSITY_HEIGHT
         )
         density = "compact" if compact else "normal"
+        self.sync_title.setVisible(size.width() >= 1000)
         if density == self._ui_density:
             return
         self._ui_density = density
         self.setProperty("uiDensity", density)
         if compact:
-            self.root_layout.setContentsMargins(8, 8, 8, 6)
+            self.root_layout.setContentsMargins(8, 6, 8, 4)
             self.root_layout.setSpacing(8)
             self.monitor_workspace_layout.setSpacing(8)
             self.monitor_grid.setHorizontalSpacing(8)
@@ -608,6 +660,7 @@ class ControllerWindow(QMainWindow):
             monitor.set_compact(compact)
         self.pdf_panel.set_compact_mode(compact)
         self.video_panel.set_compact_mode(compact)
+        self.audio_panel.set_compact_mode(compact)
         widgets = (self, *self.findChildren(QWidget))
         for widget in widgets:
             style = widget.style()
@@ -794,6 +847,7 @@ class ControllerWindow(QMainWindow):
             self._workspace_splitter_state_restored = restored
         if not self._workspace_splitter_state_restored:
             QTimer.singleShot(0, self._apply_default_workspace_split)
+        self._enforce_preview_preset_dock_visible()
 
     @staticmethod
     def _normalize_role(role: ChannelRole | str) -> ChannelRole:
@@ -1666,15 +1720,24 @@ class ControllerWindow(QMainWindow):
             self.pdf_panel.set_compact_actions(self._ui_density == "compact")
             QTimer.singleShot(0, self._fit_scroll_content)
 
-    def _show_preview_preset_panel(self) -> None:
-        """Show the preset panel without changing the operator's dock choice."""
-        if not self.preview_preset_dock.isFloating():
-            self.addDockWidget(
-                Qt.DockWidgetArea.RightDockWidgetArea,
-                self.preview_preset_dock,
+    def _show_remote_connection(self) -> None:
+        if self.remote_connection_dialog is None:
+            self.remote_connection_dialog = RemoteConnectionDialog(
+                self.remote_service,
+                self,
             )
-        self.preview_preset_dock.show()
-        self.preview_preset_dock.raise_()
+        self.remote_connection_dialog.open_connection()
+
+    def _remote_state_changed(self, state: str, message: str) -> None:
+        labels = {
+            "starting": "원격 서버 시작 중",
+            "waiting": "원격 연결 대기 중",
+            "stopped": "원격 서버 중지됨",
+            "no_address": "원격 연결 · 사용 가능한 로컬 IP 없음",
+            "error": "원격 서버 오류",
+        }
+        if state in labels:
+            self.status.setText(f"{labels[state]}{f' · {message}' if message else ''}")
 
     def start_outputs(self) -> bool:
         self.stop_outputs()
@@ -2159,6 +2222,9 @@ class ControllerWindow(QMainWindow):
             self._push_live(ChannelRole.BROADCAST)
             self._push_live(ChannelRole.VENUE)
             self.application.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            self.remote_input_dispatcher.enabled = False
+            self.frame_capture.stop()
+            self.remote_service.stop()
             self.video_manager.close()
             self.audio_controller.close()
             self.stop_outputs()

@@ -27,6 +27,7 @@ ui -> rendering -> domain
 ui -> services -> domain
 services -> filesystem / Qt screen API / PyMuPDF
 media -> domain contract / Qt Multimedia, yt-dlp, and libmpv adapters
+remote server thread -> validated protocol -> Qt queued signal -> Controller widgets
 ```
 
 The domain package contains no Qt widgets. `ApplicationState` is the single
@@ -99,9 +100,9 @@ transport command through `AudioBackendRouter`; UI code never branches on source
 scan produces sorted local items, then `PlaylistService` appends entries from the fixed
 `youtube_url.json` file when it exists. URL additions, removals, and fallback changes are
 atomically written to that file without a save dialog. The compact transport panel is placed
-to the right of the folder playlist. It contains transport controls only; the active track is
-painted with the theme accent in the left list and operational notices use the Controller
-status bar.
+to the right of the folder playlist. It shows the current track, playback state, and transport
+controls; the active track is painted with the theme accent in the left list and detailed
+operational notices use the Controller status bar.
 The router sends local files to the existing `QtMediaBackend` and YouTube sources to
 `MpvAudioBackend`. `YtDlpResolver` validates the public single-video URL and resolves
 metadata or an ephemeral best-audio URL in a bounded worker pool. `MpvAudioBackend`
@@ -147,6 +148,9 @@ checked target prepares that channel, while two checked targets reuse the existi
 atomic two-channel preparation path. The selected page and Live summary remain in
 domain state rather than occupying a persistent text row below the thumbnails.
 
+The video library similarly exposes no runtime sorting controls. It always sorts
+by modification time descending so newly added service media appears first.
+
 ## Screens and simulation
 
 `ScreenService` abstracts Qt screen enumeration and signals. `MockScreenService`
@@ -188,7 +192,70 @@ Controller density is derived automatically from the current window dimensions,
 not from a user preference: widths below 1440 or heights at or below 900 use the
 compact theme metrics. Compact mode also reduces PDF thumbnail geometry and video
 panel chrome. Window resizing never hides or floats the worship-order dock; its
-visibility and dock/floating state remain under explicit operator control.
+visibility is always restored and it has no close action. Left/right docking and
+floating remain available.
+
+## Local remote mirroring
+
+`RemoteNetworkService` owns a daemon Python thread with an independent asyncio
+event loop and an `aiohttp` HTTP/WebSocket server. It binds to `0.0.0.0` and tries
+ports 8765 through 8790. LAN addresses come only from Qt's active
+`QNetworkInterface` entries: non-loopback, non-link-local IPv4 addresses are
+accepted and RFC1918 private addresses are preferred. No external address probe,
+cloud relay, UPnP, or port forwarding is used.
+
+The browser receives the packaged, build-free HTML/CSS/JavaScript client after a
+`secrets.token_urlsafe(32)` URL token is validated. HTTP exchanges the token for
+an HttpOnly, SameSite session cookie; WebSocket handshakes require that session
+or the current token. Restart and stop invalidate both token and sessions. The
+server exposes only the client assets, frame stream, and bounded input protocol.
+Each client owns a one-frame asyncio queue, so slow clients drop stale frames and
+cannot grow memory or block other clients. The browser mirrors that backpressure:
+at most one JPEG decode runs while one replaceable latest frame waits. A newer
+arrival replaces that waiting frame, preventing Safari's asynchronous bitmap
+decodes from building an ever-older display queue. Coarse-pointer devices cap the
+canvas backing store at 1024 pixels wide while retaining the original frame size
+for CSS layout and coordinate inversion. This reduces mobile draw and canvas
+memory cost without changing WebSocket metadata or Qt input coordinates.
+
+`FrameCaptureService` runs exclusively on the Qt GUI thread. While clients exist,
+an 8 FPS timer grabs the Controller or the currently active application dialog,
+excluding the remote-connection dialog itself. Frames are capped at 1280 pixels
+wide and encoded as quality-72 JPEG. Native `QVideoWidget` pixels may be absent
+from `QWidget.grab()`. The remote capture therefore composites each surface's
+already-prepared first-frame `QImage` into the native video rectangle and labels
+it as a remote still frame. It deliberately never calls `QVideoFrame.toImage()`
+during capture: Windows hardware-decoded frames can otherwise force repeated
+GPU-to-CPU readback on the GUI thread. The Controller chrome remains at 8 FPS,
+while video motion is omitted in favor of responsive controls. Remote clients
+never allocate another decoder.
+
+The aiohttp thread only validates JSON, rate-limits it, and emits Qt signals.
+`RemoteInputDispatcher` receives those queued signals in the GUI thread, maps
+normalized coordinates to the latest captured widget and its `childAt()` target,
+then sends standard mouse, wheel, and key events through Qt. Consequently the
+Controller's existing application event filter, focus-area shortcuts, Preview
+readiness, atomic TAKE BOTH, and single `ApplicationState` remain authoritative.
+The remote layer neither reads application files nor copies presentation state.
+
+The browser owns an explicit remote-view transform independently of browser page
+zoom. The canvas keeps its Controller-frame pixel dimensions and applies a
+top-left-origin CSS `translate3d(...) scale(...)` transform. `zoom` is clamped
+from the current fit scale through 4×; pan is clamped to the transformed frame
+bounds. A pointer at viewport position `(px, py)` is mapped back with
+`((px - left) / scale, (py - top) / scale)`, divided by the original frame width
+and height, and clamped to `[0, 1]` before the existing WebSocket protocol sees
+it. This keeps Qt targeting independent of zoom and pan.
+
+Pointer Events maintain separate one-touch and two-touch states. One touch emits
+the existing pointer protocol. A second touch cancels the pending one-touch
+gesture and starts local pinch/pan without emitting its moves to the server.
+Pinch midpoint anchoring keeps the content below the fingers stable, and a short
+post-pinch guard suppresses synthetic click/double-click events. Resize,
+orientation, frame-size, and fullscreen changes recompute fit scale while
+preserving the normalized content point that occupied the previous viewport
+center. Double tap toggles a 2× anchored view and fit; the header reset returns
+zoom and pan to fit.
 
 ## Persistence and recovery
 
@@ -207,7 +274,8 @@ load.
 The Controller first asks about unsaved subtitle edits; folder playlist URL changes are already
 saved immediately. It then sets both live
 channels to BLACK, processes pending paint events, closes physical/simulation
-outputs, persists settings, and accepts shutdown. Exceptions are logged to a
+outputs, stops remote capture/server with a bounded thread join, persists
+settings, and accepts shutdown. Exceptions are logged to a
 rotating file while the best-effort BLACK/close sequence continues.
 
 ## Extension points

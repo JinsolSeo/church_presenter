@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -13,6 +14,7 @@ from church_presenter.domain.enums import (
     ContentType,
     PauseReason,
     PlaybackStatus,
+    SortField,
 )
 from church_presenter.domain.models import AppSettings, Content, ScreenInfo
 from church_presenter.media.mock_backend import MockMediaBackend
@@ -87,19 +89,71 @@ def test_video_controls_are_compact_and_beside_library(qtbot, tmp_path: Path) ->
     QApplication.processEvents()
     panel = window.video_panel
 
-    assert panel.control_panel.x() >= panel.file_list.geometry().right()
+    control_x = panel.control_panel.mapTo(panel, QPoint()).x()
+    assert control_x >= panel.file_list.geometry().right()
     assert panel.sizeHint().height() <= 380
     assert panel.take_button.property("heightRole") == "standard"
     assert panel.take_both_button.property("heightRole") == "standard"
-    assert panel.take_button.height() == panel.play_button.height()
-    assert panel.take_both_button.height() == panel.play_button.height()
+    action_buttons = (
+        panel.cue_button,
+        panel.cue_both_button,
+        panel.take_button,
+        panel.take_both_button,
+    )
+    widths = {button.width() for button in action_buttons}
+    assert max(widths) - min(widths) <= 1
+    assert len({button.height() for button in action_buttons}) == 1
+    assert panel.cue_button.x() < panel.cue_both_button.x()
+    assert panel.cue_button.y() < panel.take_button.y()
+    assert panel.action_panel.parentWidget() is panel.control_panel
+    assert all(button.parentWidget() is panel.action_panel for button in action_buttons)
+    assert not hasattr(panel, "sort_combo")
+    assert not hasattr(panel, "descending_check")
+    assert (
+        abs(
+            panel.refresh_button.geometry().right()
+            - panel.file_list.geometry().right()
+        )
+        <= 1
+    )
     assert all(
-        button.height() <= 30
+        button.height() <= 32
         for button in panel.control_panel.findChildren(QPushButton)
     )
+    assert panel.target_combo.geometry().right() <= panel.width()
+    assert (
+        panel.action_panel.y() + panel.take_button.geometry().bottom()
+        < panel.play_button.y()
+    )
+    assert panel.play_button.y() < panel.seek_slider.y()
+    assert panel.seek_slider.geometry().bottom() <= panel.control_panel.contentsRect().bottom()
+    assert panel.cue_button.property("variant") == "secondary"
+    assert panel.cue_both_button.property("variant") == "primary"
+    assert panel.take_button.property("variant") == "secondary"
+    assert panel.take_both_button.property("variant") == "take"
     assert not hasattr(panel, "fade_spin")
     assert not hasattr(panel, "status_label")
     assert window.settings.fade_duration_ms == 250
+
+
+def test_video_library_is_always_newest_first(qtbot, tmp_path: Path) -> None:
+    older = tmp_path / "older.mp4"
+    newer = tmp_path / "newer.mp4"
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_800_000_000, 1_800_000_000))
+
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    panel = window.video_panel
+    qtbot.waitUntil(lambda: panel.file_list.count() == 2, timeout=3000)
+
+    assert panel.sort_field is SortField.MODIFIED
+    assert panel.descending is True
+    assert not hasattr(panel, "sort_combo")
+    assert not hasattr(panel, "descending_check")
+    assert panel.file_list.item(0).text().startswith("newer.mp4")
+    assert panel.file_list.item(1).text().startswith("older.mp4")
 
 
 def test_media_tabs_preserve_preview_and_content_heights(qtbot, tmp_path: Path) -> None:
@@ -157,6 +211,9 @@ def test_video_click_cues_take_play_pause_and_stop_black(qtbot, tmp_path: Path) 
         Qt.MouseButton.LeftButton,
         pos=item_rect.center(),
     )
+    assert window.state.broadcast.preview_content.kind is ContentType.BLACK
+    assert panel.cue_button.isEnabled()
+    qtbot.mouseClick(panel.cue_button, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=1000)
     assert window.state.broadcast.preview_content == Content.video(video)
     assert window.state.broadcast.live_content.kind is ContentType.BLACK
@@ -270,6 +327,8 @@ def test_audio_folder_is_playlist_and_compact_player_is_on_right(qtbot, tmp_path
         track.write_bytes(b"generated audio")
     window, _backends = make_media_controller(qtbot, tmp_path)
     panel = window.audio_panel
+    window.tabs.setCurrentWidget(panel)
+    QApplication.processEvents()
     qtbot.waitUntil(lambda: panel.playlist_list.count() == 3, timeout=1000)
     assert [item.path for item in window.audio_controller.playlist.items] == tracks
     assert panel.control_panel.x() > panel.playlist_box.x()
@@ -285,6 +344,15 @@ def test_audio_folder_is_playlist_and_compact_player_is_on_right(qtbot, tmp_path
     panel.playlist_list.setCurrentRow(0)
     qtbot.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
     assert window.audio_controller.runtime.status is PlaybackStatus.PLAYING
+    assert panel.track_summary_label.text().startswith("track-0")
+    assert panel.playback_summary_label.text() == "재생 중"
+    assert (
+        panel.track_summary_label.y()
+        < panel.play_button.y()
+        < panel.seek_slider.y()
+        < panel.volume_slider.y()
+    )
+    assert panel.repeat_combo.geometry().bottom() <= panel.control_panel.contentsRect().bottom()
     expected_active = QColor(
         str(window.theme_manager.current_value("colors", "accent"))
     )

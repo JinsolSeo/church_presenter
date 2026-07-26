@@ -60,8 +60,10 @@ class VideoPanel(QWidget):
         super().__init__()
         self.manager = manager
         self.folder = folder
-        self.sort_field = sort_field
-        self.descending = descending
+        del sort_field, descending  # Retained for settings and call-site compatibility.
+        # A fixed newest-first order keeps recently added service media predictable.
+        self.sort_field = SortField.MODIFIED
+        self.descending = True
         self.selected_path: Path | None = None
         self.last_selected_path = last_selected_path
         self._preview_ready = {
@@ -86,31 +88,30 @@ class VideoPanel(QWidget):
         self.root_layout = layout
         toolbar = QHBoxLayout()
         self.toolbar_layout = toolbar
-        folder_button = QPushButton("영상 폴더")
+        self.folder_button = QPushButton("영상 폴더")
         self.folder_label = QLabel(str(self.folder or "선택되지 않음"))
-        self.folder_label.setMinimumWidth(0)
+        self.folder_label.setMinimumWidth(60)
+        self.folder_label.setMaximumWidth(520)
         self.folder_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
         )
         self.folder_label.setToolTip(str(self.folder or ""))
-        self.sort_combo = QComboBox()
-        self.sort_combo.addItem("파일명", SortField.NAME.value)
-        self.sort_combo.addItem("수정 날짜", SortField.MODIFIED.value)
-        self.sort_combo.setCurrentIndex(0 if self.sort_field is SortField.NAME else 1)
-        self.descending_check = QCheckBox("내림차순")
-        self.descending_check.setChecked(self.descending)
-        refresh_button = QPushButton("새로고침")
-        for widget in (
-            folder_button,
-            self.folder_label,
-            self.sort_combo,
-            self.descending_check,
-            refresh_button,
-        ):
+        self.refresh_button = QPushButton("새로고침")
+        for widget in (self.folder_button, self.folder_label):
             toolbar.addWidget(widget)
-        toolbar.setStretch(1, 1)
-        layout.addLayout(toolbar)
+        toolbar.addStretch(1)
+        toolbar.addWidget(self.refresh_button)
+
+        self.target_toolbar = QHBoxLayout()
+        self.target_toolbar.setContentsMargins(0, 0, 0, 0)
+        self.target_toolbar.addStretch(1)
+        self.target_label = QLabel("제어 채널")
+        self.target_combo = QComboBox()
+        self.target_combo.addItem("송출", ChannelRole.BROADCAST.value)
+        self.target_combo.addItem("현장", ChannelRole.VENUE.value)
+        self.target_toolbar.addWidget(self.target_label)
+        self.target_toolbar.addWidget(self.target_combo)
 
         content_layout = QHBoxLayout()
         self.content_layout = content_layout
@@ -121,18 +122,32 @@ class VideoPanel(QWidget):
         library_layout.setSpacing(6)
         self.file_list = QListWidget()
         self.file_list.setIconSize(QPixmap(160, 90).size())
-        self.info_label = QLabel("영상 파일을 선택하면 실제 첫 프레임을 Preview로 준비합니다.")
+        self.info_label = QLabel(
+            "1 파일 선택  →  2 Preview Cue  →  3 TAKE  →  4 재생"
+        )
+        self.info_label.setProperty("role", "workflowHint")
+        library_layout.addLayout(toolbar)
         library_layout.addWidget(self.file_list, 1)
         library_layout.addWidget(self.info_label)
         content_layout.addLayout(library_layout, 1)
 
+        self.control_column = QWidget()
+        self.control_column.setMinimumWidth(240)
+        self.control_column.setMaximumWidth(640)
+        self.control_column.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.control_column_layout = QVBoxLayout(self.control_column)
+        self.control_column_layout.setContentsMargins(0, 0, 0, 0)
+        self.control_column_layout.setSpacing(6)
+        self.control_column_layout.addLayout(self.target_toolbar)
+
         self.control_panel = QFrame()
         self.control_panel.setObjectName("VideoControlPanel")
         self.control_panel.setFrameShape(QFrame.Shape.StyledPanel)
-        self.control_panel.setMinimumWidth(240)
-        self.control_panel.setMaximumWidth(640)
         self.control_panel.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
         controls = QGridLayout(self.control_panel)
@@ -141,60 +156,92 @@ class VideoPanel(QWidget):
         controls.setHorizontalSpacing(6)
         controls.setVerticalSpacing(6)
 
-        self.target_combo = QComboBox()
-        self.target_combo.addItem("송출", ChannelRole.BROADCAST.value)
-        self.target_combo.addItem("현장", ChannelRole.VENUE.value)
-        cue_button = QPushButton("선택 채널 Preview Cue")
-        cue_button.setProperty("variant", "primary")
-        both_button = QPushButton("Send to Both")
+        self.cue_button = QPushButton("Preview Cue")
+        self.cue_button.setProperty("variant", "secondary")
+        self.cue_both_button = QPushButton("양쪽 Cue")
+        self.cue_both_button.setProperty("variant", "primary")
+        self.cue_button.setEnabled(False)
+        self.cue_both_button.setEnabled(False)
         self.take_button = QPushButton("TAKE")
+        self.take_button.setProperty("variant", "secondary")
         self.take_both_button = QPushButton("TAKE BOTH")
-        self.take_button.setProperty("variant", "take")
         self.take_both_button.setProperty("variant", "take")
         self.take_button.setProperty("heightRole", "standard")
         self.take_both_button.setProperty("heightRole", "standard")
         self.take_button.setEnabled(False)
         self.take_both_button.setEnabled(False)
-        self.play_button = QPushButton("Play")
-        self.pause_button = QPushButton("Pause")
-        self.stop_button = QPushButton("Stop → BLACK")
+        for button, description in (
+            (self.cue_button, "선택 채널에 Preview Cue"),
+            (self.cue_both_button, "송출과 현장에 Preview Cue"),
+            (self.take_button, "선택 채널 TAKE"),
+            (self.take_both_button, "송출과 현장 TAKE BOTH"),
+        ):
+            button.setToolTip(description)
+            button.setAccessibleName(description)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
+        self.action_panel = QWidget(self.control_panel)
+        self.action_layout = QGridLayout(self.action_panel)
+        self.action_layout.setContentsMargins(0, 0, 0, 0)
+        self.action_layout.setHorizontalSpacing(6)
+        self.action_layout.setVerticalSpacing(6)
+        self.action_layout.addWidget(self.cue_button, 0, 0)
+        self.action_layout.addWidget(self.cue_both_button, 0, 1)
+        self.action_layout.addWidget(self.take_button, 1, 0)
+        self.action_layout.addWidget(self.take_both_button, 1, 1)
+        self.action_layout.setColumnStretch(0, 1)
+        self.action_layout.setColumnStretch(1, 1)
+        self.play_button = QPushButton("재생")
+        self.pause_button = QPushButton("일시정지")
+        self.stop_button = QPushButton("정지 → BLACK")
         self.restart_button = QPushButton("처음으로")
+        for button, description in (
+            (self.play_button, "영상 재생"),
+            (self.pause_button, "영상 일시정지"),
+            (self.stop_button, "영상 정지 후 BLACK"),
+            (self.restart_button, "영상 처음으로"),
+        ):
+            button.setToolTip(description)
+            button.setAccessibleName(description)
         self.seek_slider = QSlider(Qt.Orientation.Horizontal)
         self.seek_slider.setRange(0, 0)
+        self.seek_slider.setAccessibleName("영상 재생 위치")
+        self.seek_slider.setToolTip("영상 재생 위치")
+        self.seek_label = QLabel("위치")
+        self.seek_label.hide()
         self.time_label = QLabel("00:00 / 00:00")
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(volume)
+        self.volume_slider.setAccessibleName("영상 볼륨")
+        self.volume_slider.setToolTip("영상 볼륨")
         self.mute_check = QCheckBox("음소거")
         self.mute_check.setChecked(muted)
-        controls.addWidget(QLabel("제어 채널"), 0, 0)
-        controls.addWidget(self.target_combo, 0, 1, 1, 3)
-        controls.addWidget(cue_button, 1, 0, 1, 2)
-        controls.addWidget(both_button, 1, 2, 1, 2)
-        controls.addWidget(self.take_button, 2, 0, 1, 2)
-        controls.addWidget(self.take_both_button, 2, 2, 1, 2)
-        controls.addWidget(self.play_button, 3, 0)
-        controls.addWidget(self.pause_button, 3, 1)
-        controls.addWidget(self.stop_button, 3, 2)
-        controls.addWidget(self.restart_button, 3, 3)
-        controls.addWidget(self.seek_slider, 4, 0, 1, 3)
-        controls.addWidget(self.time_label, 4, 3)
-        controls.addWidget(QLabel("영상 볼륨"), 5, 0)
-        controls.addWidget(self.volume_slider, 5, 1, 1, 2)
-        controls.addWidget(self.mute_check, 5, 3)
+        self.volume_label = QLabel("영상 볼륨")
+        controls.addWidget(self.action_panel, 0, 0, 1, 4)
+        controls.addWidget(self.play_button, 1, 0)
+        controls.addWidget(self.pause_button, 1, 1)
+        controls.addWidget(self.stop_button, 1, 2)
+        controls.addWidget(self.restart_button, 1, 3)
+        controls.addWidget(self.seek_slider, 2, 0, 1, 3)
+        controls.addWidget(self.time_label, 2, 3)
+        controls.addWidget(self.volume_label, 3, 0)
+        controls.addWidget(self.volume_slider, 3, 1, 1, 2)
+        controls.addWidget(self.mute_check, 3, 3)
         for column in range(4):
             controls.setColumnStretch(column, 1)
-        controls.setRowStretch(6, 1)
-        content_layout.addWidget(self.control_panel)
+        controls.setRowStretch(4, 1)
+        self.control_column_layout.addWidget(self.control_panel, 1)
+        content_layout.addWidget(self.control_column)
         layout.addLayout(content_layout, 1)
 
-        folder_button.clicked.connect(self.choose_folder)
-        refresh_button.clicked.connect(self.refresh)
-        self.sort_combo.currentIndexChanged.connect(self._sort_changed)
-        self.descending_check.toggled.connect(self._sort_changed)
+        self.folder_button.clicked.connect(self.choose_folder)
+        self.refresh_button.clicked.connect(self.refresh)
         self.file_list.itemSelectionChanged.connect(self._selection_changed)
-        cue_button.clicked.connect(self.cue_selected)
-        both_button.clicked.connect(self.cue_both)
+        self.cue_button.clicked.connect(self.cue_selected)
+        self.cue_both_button.clicked.connect(self.cue_both)
         self.take_button.clicked.connect(lambda: self.take_requested.emit(self.target_role))
         self.take_both_button.clicked.connect(self.take_both_requested)
         self.target_combo.currentIndexChanged.connect(self._target_changed)
@@ -220,13 +267,85 @@ class VideoPanel(QWidget):
         self.root_layout.setContentsMargins(*root_margins)
         self.root_layout.setSpacing(6 if compact else 9)
         self.toolbar_layout.setSpacing(6 if compact else 9)
+        self.target_toolbar.setSpacing(6 if compact else 9)
         self.content_layout.setSpacing(6 if compact else 10)
         self.library_layout.setSpacing(4 if compact else 6)
+        self.control_column_layout.setSpacing(4 if compact else 6)
         self.controls_layout.setContentsMargins(*control_margins)
         self.controls_layout.setHorizontalSpacing(4 if compact else 6)
         self.controls_layout.setVerticalSpacing(4 if compact else 6)
+        self.action_layout.setHorizontalSpacing(4 if compact else 6)
+        self.action_layout.setVerticalSpacing(4 if compact else 6)
         self.file_list.setIconSize(QSize(128, 72) if compact else QSize(160, 90))
         self.info_label.setVisible(not compact)
+        self.folder_button.setText("폴더" if compact else "영상 폴더")
+        self.folder_label.setMaximumWidth(120 if compact else 520)
+        self.refresh_button.setText("↻" if compact else "새로고침")
+        self.play_button.setText("▶" if compact else "재생")
+        self.pause_button.setText("⏸" if compact else "일시정지")
+        self.stop_button.setText("■" if compact else "정지 → BLACK")
+        self.restart_button.setText("↺" if compact else "처음으로")
+        self.target_label.setVisible(not compact)
+        self.volume_label.setText("볼륨" if compact else "영상 볼륨")
+        self._arrange_controls(compact)
+
+    def _arrange_controls(self, compact: bool) -> None:
+        """Keep every video action usable when the lower workspace is shallow."""
+        widgets = (
+            self.action_panel,
+            self.play_button,
+            self.pause_button,
+            self.stop_button,
+            self.restart_button,
+            self.seek_label,
+            self.seek_slider,
+            self.time_label,
+            self.volume_label,
+            self.volume_slider,
+            self.mute_check,
+        )
+        for widget in widgets:
+            self.controls_layout.removeWidget(widget)
+        for row in range(6):
+            self.controls_layout.setRowStretch(row, 0)
+
+        if compact:
+            self.time_label.hide()
+            self.seek_label.show()
+            self.volume_label.show()
+            for column in range(6):
+                self.controls_layout.setColumnStretch(column, 1)
+            self.controls_layout.addWidget(self.action_panel, 0, 0, 1, 6)
+            self.controls_layout.addWidget(self.play_button, 1, 0)
+            self.controls_layout.addWidget(self.pause_button, 1, 1, 1, 2)
+            self.controls_layout.addWidget(self.stop_button, 1, 3)
+            self.controls_layout.addWidget(self.restart_button, 1, 4, 1, 2)
+            self.controls_layout.addWidget(self.seek_label, 2, 0)
+            self.controls_layout.addWidget(self.seek_slider, 2, 1, 1, 2)
+            self.controls_layout.addWidget(self.volume_label, 2, 3)
+            self.controls_layout.addWidget(self.volume_slider, 2, 4)
+            self.controls_layout.addWidget(self.mute_check, 2, 5)
+            self.controls_layout.setRowStretch(3, 1)
+            return
+
+        self.seek_label.hide()
+        self.time_label.show()
+        self.volume_label.show()
+        for column in range(4):
+            self.controls_layout.setColumnStretch(column, 1)
+        self.controls_layout.setColumnStretch(4, 0)
+        self.controls_layout.setColumnStretch(5, 0)
+        self.controls_layout.addWidget(self.action_panel, 0, 0, 1, 4)
+        self.controls_layout.addWidget(self.play_button, 1, 0)
+        self.controls_layout.addWidget(self.pause_button, 1, 1)
+        self.controls_layout.addWidget(self.stop_button, 1, 2)
+        self.controls_layout.addWidget(self.restart_button, 1, 3)
+        self.controls_layout.addWidget(self.seek_slider, 2, 0, 1, 3)
+        self.controls_layout.addWidget(self.time_label, 2, 3)
+        self.controls_layout.addWidget(self.volume_label, 3, 0)
+        self.controls_layout.addWidget(self.volume_slider, 3, 1, 1, 2)
+        self.controls_layout.addWidget(self.mute_check, 3, 3)
+        self.controls_layout.setRowStretch(4, 1)
 
     def choose_folder(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -330,16 +449,15 @@ class VideoPanel(QWidget):
     def _selection_changed(self) -> None:
         item = self.file_list.currentItem()
         if item is None:
+            self.selected_path = None
+            self._update_cue_buttons()
             return
         self.selected_path = Path(str(item.data(Qt.ItemDataRole.UserRole)))
         self.selection_changed.emit(str(self.selected_path))
-        self.cue_selected()
-
-    def _sort_changed(self) -> None:
-        self.sort_field = SortField(str(self.sort_combo.currentData()))
-        self.descending = self.descending_check.isChecked()
-        self.settings_changed.emit()
-        self.refresh()
+        self._update_cue_buttons()
+        self._set_status(
+            f"{self.selected_path.name} 선택 · 채널을 확인하고 Preview Cue를 누르십시오."
+        )
 
     def _runtime_changed(self, role: ChannelRole, runtime: VideoPlaybackRuntimeState) -> None:
         if role is not self.target_role:
@@ -398,6 +516,11 @@ class VideoPanel(QWidget):
     def _update_take_buttons(self) -> None:
         self.take_button.setEnabled(self._preview_ready[self.target_role])
         self.take_both_button.setEnabled(all(self._preview_ready.values()))
+
+    def _update_cue_buttons(self) -> None:
+        has_selection = self.selected_path is not None and self.selected_path.is_file()
+        self.cue_button.setEnabled(has_selection)
+        self.cue_both_button.setEnabled(has_selection)
 
     def _set_status(self, message: str) -> None:
         self.status_changed.emit(message)
