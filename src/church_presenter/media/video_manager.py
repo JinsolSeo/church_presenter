@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QImage
+from PySide6.QtMultimedia import QVideoFrame
 
 from church_presenter.domain.enums import ChannelRole, PlaybackStatus
 from church_presenter.domain.models import VideoPlaybackRuntimeState
@@ -26,6 +27,7 @@ class _ChannelPlayers:
     preview_ready: bool = False
     preview_frame: QImage = field(default_factory=QImage)
     live_frame: QImage = field(default_factory=QImage)
+    live_native_frame: QVideoFrame = field(default_factory=QVideoFrame)
     generation: int = 0
 
 
@@ -100,6 +102,7 @@ class VideoPlaybackManager(QObject):
                 old_live,
             )
             players.live_frame = QImage(players.preview_frame)
+            players.live_native_frame = QVideoFrame()
             players.live_state = VideoPlaybackRuntimeState(
                 path=resolved,
                 status=PlaybackStatus.LIVE_PAUSED,
@@ -243,11 +246,14 @@ class VideoPlaybackManager(QObject):
             players.live_backend.stop()
         players.live_state = VideoPlaybackRuntimeState(volume=self.volume, is_muted=self.muted)
         players.live_frame = QImage()
+        players.live_native_frame = QVideoFrame()
         self._set_active(role, False)
         self.runtime_changed.emit(role, players.live_state)
 
-    def last_live_frame(self, role: ChannelRole) -> tuple[Path | None, QImage]:
+    def last_live_frame(self, role: ChannelRole) -> tuple[Path | None, object]:
         players = self._channels[role]
+        if players.live_native_frame.isValid():
+            return players.live_state.path, QVideoFrame(players.live_native_frame)
         return players.live_state.path, QImage(players.live_frame)
 
     def runtime(self, role: ChannelRole) -> VideoPlaybackRuntimeState:
@@ -321,7 +327,12 @@ class VideoPlaybackManager(QObject):
         ):
             players.preview_state.status = PlaybackStatus.READY
 
-    def _frame(self, role: ChannelRole, backend: MediaPlaybackBackend, image: QImage) -> None:
+    def _frame(
+        self,
+        role: ChannelRole,
+        backend: MediaPlaybackBackend,
+        frame: object,
+    ) -> None:
         players = self._channels[role]
         path = backend.path
         if path is None:
@@ -337,13 +348,37 @@ class VideoPlaybackManager(QObject):
                 }
             ):
                 return
+            image = self._frame_image(frame)
+            if image.isNull():
+                return
             players.preview_frame = QImage(image)
             players.preview_ready = True
             players.preview_state.status = PlaybackStatus.CUE
             self.preview_result.emit(role, str(path), QImage(image), "")
         elif backend is players.live_backend:
-            players.live_frame = QImage(image)
-            self.live_frame_ready.emit(role, str(path), QImage(image))
+            if isinstance(frame, QVideoFrame):
+                if not frame.isValid():
+                    return
+                players.live_native_frame = QVideoFrame(frame)
+                self.live_frame_ready.emit(
+                    role,
+                    str(path),
+                    QVideoFrame(players.live_native_frame),
+                )
+                return
+            if not isinstance(frame, QImage) or frame.isNull():
+                return
+            players.live_frame = QImage(frame)
+            players.live_native_frame = QVideoFrame()
+            self.live_frame_ready.emit(role, str(path), QImage(frame))
+
+    @staticmethod
+    def _frame_image(frame: object) -> QImage:
+        if isinstance(frame, QImage):
+            return QImage(frame)
+        if isinstance(frame, QVideoFrame) and frame.isValid():
+            return frame.toImage()
+        return QImage()
 
     def _position(self, role: ChannelRole, backend: MediaPlaybackBackend, position: int) -> None:
         players = self._channels[role]

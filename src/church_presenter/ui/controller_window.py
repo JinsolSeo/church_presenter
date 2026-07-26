@@ -1787,7 +1787,7 @@ class ControllerWindow(QMainWindow):
                 self.venue_simulator.set_content(content, fade)
         if content.kind is ContentType.VIDEO:
             path, frame = self.video_manager.last_live_frame(role)
-            if path is not None and not frame.isNull():
+            if path is not None:
                 self._video_live_frame(role, str(path), frame)
 
     def _refresh_channel(self, role: ChannelRole) -> None:
@@ -1904,7 +1904,7 @@ class ControllerWindow(QMainWindow):
         self,
         role: ChannelRole | str,
         path: str,
-        image: QImage,
+        frame: object,
     ) -> None:
         role = self._normalize_role(role)
         surfaces = (
@@ -1913,22 +1913,22 @@ class ControllerWindow(QMainWindow):
             else (self.venue_live.surface,)
         )
         for surface in surfaces:
-            surface.set_video_frame(path, image)
+            surface.set_video_frame(path, frame)
         if role is ChannelRole.BROADCAST:
             if self.broadcast_output:
-                self.broadcast_output.surface.set_video_frame(path, image)
+                self.broadcast_output.surface.set_video_frame(path, frame)
             if self.broadcast_simulator:
-                self.broadcast_simulator.surface.set_video_frame(path, image)
+                self.broadcast_simulator.surface.set_video_frame(path, frame)
         else:
             if self.venue_output:
-                self.venue_output.surface.set_video_frame(path, image)
+                self.venue_output.surface.set_video_frame(path, frame)
             if self.venue_simulator:
-                self.venue_simulator.surface.set_video_frame(path, image)
+                self.venue_simulator.surface.set_video_frame(path, frame)
 
     def _restore_live_video_frames(self) -> None:
         for role in (ChannelRole.BROADCAST, ChannelRole.VENUE):
             path, frame = self.video_manager.last_live_frame(role)
-            if path is not None and not frame.isNull():
+            if path is not None:
                 self._video_live_frame(role, str(path), frame)
 
     def _video_play_started(self, role: ChannelRole | str) -> None:

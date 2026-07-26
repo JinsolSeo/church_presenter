@@ -61,16 +61,20 @@ background, padding, alignment, and line spacing with QPainter. PDF pages use a
 shared contain calculation and black letterboxing. No simulation-only image or
 renderer exists.
 
-Decoded video frames are distributed as `QImage` values to the same
-`OutputSurface` instances. Controller Live, physical output, and Simulation do
-not create additional decoders. Each channel has one prepared Preview decoder
-and one Live decoder; TAKE swaps those prepared/live roles so the first frame is
-already available and the prior Live can continue while a new Preview is cued.
+The prepared first video frame is converted once to `QImage` for thumbnails and
+paused Preview. During Live playback, native `QVideoFrame` values are distributed
+to the `QVideoWidget` sink embedded in each `OutputSurface`; the normal path does
+not convert every frame to a CPU image or repaint it through the parent widget.
+Controller Live, physical output, and Simulation do not create additional
+decoders. Each channel has one prepared Preview decoder and one Live decoder;
+TAKE swaps those prepared/live roles so the first frame is already available and
+the prior Live can continue while a new Preview is cued.
 
 `OutputSurface` performs a fixed 250ms linear two-stage opacity fade for transitions among
 BLACK, SOLID_COLOR, PDF, and VIDEO. Content readiness is validated before state commit. The
 fade only paints existing frames and images; it does not use blur or allocate a
-second video decoder.
+second video decoder. When leaving native Live video, the surface freezes one
+frame to an image for the short fade and then clears the native sink.
 
 ## Media playback
 

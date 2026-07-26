@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QImage, QPainter, QPaintEvent, QResizeEvent
+from PySide6.QtMultimedia import QVideoFrame
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from church_presenter.domain.enums import ContentType
@@ -32,13 +34,21 @@ class OutputSurface(QWidget):
         self.content = Content.black()
         self.pdf_image = QImage()
         self.video_frame = QImage()
+        self.video_native_frame = QVideoFrame()
         self._video_frame_path = ""
         self._pending_content: Content | None = None
         self._opacity = 1.0
+        self._native_video_allowed = True
         self._token = ""
         self.setMinimumSize(160, 90)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setCursor(Qt.CursorShape.BlankCursor)
+        self.video_widget = QVideoWidget(self)
+        self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+        self.video_widget.setCursor(Qt.CursorShape.BlankCursor)
+        self.video_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.video_widget.setStyleSheet("background: black;")
+        self.video_widget.hide()
         self.coordinator.rendered.connect(self._rendered)
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -50,10 +60,14 @@ class OutputSurface(QWidget):
             animation.setEasingCurve(QEasingCurve.Type.Linear)
             animation.valueChanged.connect(self._fade_value_changed)
         self._fade_out.finished.connect(self._fade_out_finished)
+        self._fade_in.finished.connect(self._fade_in_finished)
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
         transition = TransitionService(fade_duration_ms)
         if transition.should_fade(self.content.kind, content.kind):
+            self._freeze_native_video()
+            self._native_video_allowed = False
+            self.video_widget.hide()
             self._fade_out.stop()
             self._fade_in.stop()
             self._pending_content = content
@@ -65,6 +79,7 @@ class OutputSurface(QWidget):
         self._fade_out.stop()
         self._fade_in.stop()
         self._opacity = 1.0
+        self._native_video_allowed = True
         self._pending_content = None
         self._apply_content(content)
 
@@ -82,19 +97,34 @@ class OutputSurface(QWidget):
             or str(content.video_path or "") != self._video_frame_path
         ):
             self.video_frame = QImage()
+            self.video_native_frame = QVideoFrame()
+            self.video_widget.videoSink().setVideoFrame(QVideoFrame())
             self._video_frame_path = ""
         self._token = uuid4().hex
+        self._sync_video_widget()
         self.update()
         self._request_pdf()
 
-    def set_video_frame(self, path: str, image: QImage) -> None:
+    def set_video_frame(self, path: str, frame: object) -> None:
         """Update a real decoded frame for current or pending video content."""
         current_path = str(self.content.video_path or "")
         pending_path = str(self._pending_content.video_path or "") if self._pending_content else ""
         if path not in (current_path, pending_path):
             return
         self._video_frame_path = path
-        self.video_frame = QImage(image)
+        if isinstance(frame, QVideoFrame):
+            if not frame.isValid():
+                return
+            self.video_native_frame = QVideoFrame(frame)
+            self.video_widget.videoSink().setVideoFrame(self.video_native_frame)
+            self._sync_video_widget()
+            return
+        if not isinstance(frame, QImage) or frame.isNull():
+            return
+        self.video_native_frame = QVideoFrame()
+        self.video_widget.videoSink().setVideoFrame(QVideoFrame())
+        self.video_frame = QImage(frame)
+        self._sync_video_widget()
         self.update()
 
     def paintEvent(self, _event: QPaintEvent) -> None:
@@ -111,6 +141,7 @@ class OutputSurface(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self.video_widget.setGeometry(self.rect())
         if self.content.kind is ContentType.PDF_PAGE:
             self._resize_timer.start()
 
@@ -161,6 +192,30 @@ class OutputSurface(QWidget):
         self._fade_in.setStartValue(0.0)
         self._fade_in.setEndValue(1.0)
         self._fade_in.start()
+
+    def _fade_in_finished(self) -> None:
+        self._opacity = 1.0
+        self._native_video_allowed = True
+        self._sync_video_widget()
+        self.update()
+
+    def _freeze_native_video(self) -> None:
+        if not self.video_native_frame.isValid():
+            return
+        image = self.video_native_frame.toImage()
+        if not image.isNull():
+            self.video_frame = image
+
+    def _sync_video_widget(self) -> None:
+        show_native = (
+            self._native_video_allowed
+            and self.content.kind is ContentType.VIDEO
+            and str(self.content.video_path or "") == self._video_frame_path
+            and self.video_native_frame.isValid()
+        )
+        self.video_widget.setVisible(show_native)
+        if show_native:
+            self.video_widget.raise_()
 
 
 class AspectRatioContainer(QWidget):

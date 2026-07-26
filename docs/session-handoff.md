@@ -364,6 +364,32 @@ decoder의 position이 모두 500ms 이상 증가하는지 확인한다.
 backend는 강제 음소거하고 Broadcast backend만 오디오를 출력한다. 그룹 해제 시 두
 backend 모두 사용자의 전역 영상 음소거 설정으로 복원한다.
 
+### 19. Windows Live 영상 프레임 변환으로 Controller까지 버벅임
+
+기존 `QtMediaBackend`는 `QVideoSink`의 모든 Live 프레임에 `toImage()`를 호출하고,
+Controller/Simulation/실제 출력의 `OutputSurface`가 각각 `QPainter.drawImage()`로
+다시 그렸다. Windows 하드웨어 디코딩 프레임에서는 GPU→CPU readback과 색상 변환이
+매 프레임 발생할 수 있고, GUI 이벤트 루프가 밀리면 영상과 Controller가 함께
+끊겼다.
+
+현재 Preview 첫 프레임만 `QImage`로 변환한다. Live에서는 `QVideoFrame`을 유지해
+각 `OutputSurface`의 `QVideoWidget.videoSink()`로 전달한다. 콘텐츠 전환 시에만 마지막
+네이티브 프레임을 한 번 이미지로 고정해 기존 250ms fade를 수행한다. 회귀 테스트는
+`test_qt_backend_cues_first_frame_and_plays`에서 Live 타입이 `QVideoFrame`인지,
+`test_output_surface_uses_native_video_frame_until_content_changes`에서 sink 표시와
+해제를 확인한다.
+
+### 20. 로컬 음악 첫 Play가 로딩 완료 직후 Pause로 덮임
+
+오디오 `LoadedMedia` 처리에서 `loaded.emit()` 뒤 `player.pause()`를 호출했다.
+`loaded` 콜백은 pending Play를 동기 실행할 수 있으므로 실제 순서가
+`Play → Pause`가 되었고, Windows backend에서는 첫 클릭이 PAUSED로 끝날 수 있었다.
+
+현재 오디오 backend는 prepared Pause를 먼저 확정한 뒤 `loaded`를 알린다. 따라서
+콜백의 Play가 마지막 transport 명령이 된다. 실제 WAV와 `QMediaPlayer`를 사용하는
+`test_qt_local_audio_first_play_stays_playing`은 첫 클릭 후 PLAYING 유지와 position
+증가를 확인한다.
+
 ## 다시 사용하지 않을 접근 요약
 
 | 접근 | 문제가 된 이유 | 현재 대안 |

@@ -3,10 +3,35 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtGui import QImage
+from PySide6.QtMultimedia import QVideoFrame
 
 from church_presenter.domain.enums import ChannelRole, PlaybackStatus
+from church_presenter.media.audio_controller import AudioPlaybackController
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
+
+
+@pytest.mark.media_integration
+def test_qt_local_audio_first_play_stays_playing(qtbot) -> None:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "sample_assets"
+        / "audio"
+        / "sample_track_01.wav"
+    )
+    backend = QtMediaBackend(video=False)
+    controller = AudioPlaybackController(backend)
+    controller.add_paths([path])
+
+    assert controller.play(0)
+    qtbot.waitUntil(
+        lambda: controller.runtime.status is PlaybackStatus.PLAYING,
+        timeout=5000,
+    )
+    qtbot.waitUntil(lambda: controller.runtime.position_ms >= 200, timeout=5000)
+    assert backend.player.playbackState().name == "PlayingState"
+    controller.close()
 
 
 @pytest.mark.media_integration
@@ -15,14 +40,20 @@ def test_qt_backend_cues_first_frame_and_plays(qtbot) -> None:
     manager = VideoPlaybackManager(lambda: QtMediaBackend(video=True), muted=True)
     results: list[tuple[str, bool, str]] = []
     live_colors: list[int] = []
+    live_frame_types: list[type[object]] = []
+
+    def record_live_frame(_role: object, _path: str, frame: object) -> None:
+        live_frame_types.append(type(frame))
+        image = frame.toImage() if isinstance(frame, QVideoFrame) else frame
+        if isinstance(image, QImage) and not image.isNull():
+            live_colors.append(image.pixelColor(10, 10).rgb())
+
     manager.preview_result.connect(
         lambda _role, loaded_path, image, error: results.append(
             (loaded_path, image.isNull(), error)
         )
     )
-    manager.live_frame_ready.connect(
-        lambda _role, _path, image: live_colors.append(image.pixelColor(10, 10).rgb())
-    )
+    manager.live_frame_ready.connect(record_live_frame)
     manager.cue_preview(ChannelRole.BROADCAST, path)
     qtbot.waitUntil(lambda: bool(results), timeout=10_000)
     assert results[-1] == (str(path.resolve()), False, "")
@@ -37,6 +68,7 @@ def test_qt_backend_cues_first_frame_and_plays(qtbot) -> None:
         timeout=5000,
     )
     qtbot.waitUntil(lambda: len(set(live_colors)) >= 2, timeout=5000)
+    assert QVideoFrame in live_frame_types
     manager.pause(ChannelRole.BROADCAST)
     manager.stop(ChannelRole.BROADCAST)
     manager.close()

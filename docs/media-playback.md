@@ -113,9 +113,11 @@ yt-dlp + libmpv adapter를 사용합니다. 컨테이너/코덱, 하드웨어 �
 Broadcast와 Venue의 다른 영상을 동시에 재생하면 decoder 두 개를 사용합니다. 각
 채널에서 Live 재생 중 다음 영상을 Cue하면 일시적으로 Preview decoder도 사용하므로
 최대 네 개의 영상 decoder가 동작할 수 있습니다. Controller, Simulation, 실제 출력은
-같은 디코딩 프레임을 공유합니다. 현재 macOS offscreen smoke에서는 640x360 10fps
-12초 샘플의 단일 Cue, 양쪽 동시 Cue, 같은 소스 재Cue, 연속 프레임 진행과
-Play/Pause/Stop을 확인했으며 Windows 성능 수치는 아직 측정하지 않았습니다.
+같은 네이티브 `QVideoFrame`을 각 `QVideoWidget` sink로 전달받습니다. Preview 첫
+프레임과 화면 전환 순간만 `QImage`로 변환하며, Live의 매 프레임을 Python GUI
+스레드에서 이미지로 변환하고 다시 그리지 않습니다. 현재 macOS offscreen smoke에서는
+640x360 10fps 12초 샘플의 단일 Cue, 양쪽 동시 Cue, 같은 소스 재Cue, 연속 프레임
+진행과 Play/Pause/Stop을 확인했으며 Windows 성능 수치는 아직 측정하지 않았습니다.
 
 macOS에서 `Failed setup for format videotoolbox_vld`가 출력되더라도 뒤이어 실제 첫
 프레임과 위치 진행이 확인되면 Qt FFmpeg가 CPU 변환으로 대체한 경고이며 Cue 실패로

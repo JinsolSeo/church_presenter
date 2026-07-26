@@ -5,7 +5,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
-from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QVideoSink
+from PySide6.QtMultimedia import (
+    QAudioDevice,
+    QAudioOutput,
+    QMediaPlayer,
+    QVideoFrame,
+    QVideoSink,
+)
 
 from church_presenter.domain.enums import PlaybackStatus
 from church_presenter.media.base import MediaPlaybackBackend
@@ -159,8 +165,8 @@ class QtMediaBackend(MediaPlaybackBackend):
             self._load_pending = False
             self.player.setPosition(0)
             self._set_status(PlaybackStatus.READY)
-            self.loaded.emit()
             if self.video_sink is not None:
+                self.loaded.emit()
                 # Preview backends are muted by their manager. Decode only until
                 # the first real frame is available, then pause at the beginning.
                 generation = self._load_generation
@@ -170,7 +176,12 @@ class QtMediaBackend(MediaPlaybackBackend):
                 QTimer.singleShot(1500, lambda: self._retry_priming(generation, 100))
                 QTimer.singleShot(4000, lambda: self._retry_priming(generation, 500))
             else:
+                # Establish the prepared/paused state before notifying the
+                # controller. The loaded signal can synchronously request Play;
+                # pausing after that request makes the first click platform
+                # dependent and leaves Windows backends paused.
                 self.player.pause()
+                self.loaded.emit()
         elif status is QMediaPlayer.MediaStatus.EndOfMedia:
             self._set_status(PlaybackStatus.ENDED)
             self.ended.emit()
@@ -188,17 +199,22 @@ class QtMediaBackend(MediaPlaybackBackend):
         elif state is QMediaPlayer.PlaybackState.PausedState:
             self._set_status(PlaybackStatus.PAUSED)
 
-    def _video_frame_changed(self, frame: object) -> None:
-        if not self._accept_video_frames:
+    def _video_frame_changed(self, frame: QVideoFrame) -> None:
+        if not self._accept_video_frames or not frame.isValid():
             return
-        image = frame.toImage()  # type: ignore[attr-defined]
-        if not image.isNull():
-            if self._priming_video:
+        if self._priming_video:
+            image = frame.toImage()
+            if not image.isNull():
                 self.player.pause()
                 self.player.setPosition(0)
                 self._priming_video = False
                 self._set_status(PlaybackStatus.READY)
-            self.frame_ready.emit(image)
+                self.frame_ready.emit(image)
+            return
+        # Preserve the native video frame during Live playback. Converting every
+        # frame to QImage forces CPU-addressable pixel conversion/readback and
+        # makes the GUI thread responsible for the whole video pipeline.
+        self.frame_ready.emit(QVideoFrame(frame))
 
     def _retry_priming(self, generation: int, position_ms: int) -> None:
         if generation != self._load_generation or not self._priming_video:
