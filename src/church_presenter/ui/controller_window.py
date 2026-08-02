@@ -83,6 +83,7 @@ CONTROLLER_MINIMUM_SIZE = QSize(800, 600)
 COMPACT_HEADER_WIDTH = 1100
 COMPACT_DENSITY_WIDTH = 1440
 COMPACT_DENSITY_HEIGHT = 900
+BROADCAST_CHROMA_CONTENT = Content.solid_color("#00FF00")
 
 
 class ChannelMonitor(QFrame):
@@ -473,6 +474,12 @@ class ControllerWindow(QMainWindow):
         self.sync_auto_take_check.setToolTip(
             "이전/다음 입력 후 두 Preview가 준비되면 TAKE BOTH를 자동 실행합니다."
         )
+        self.sync_chroma_check = QCheckBox("크로마키")
+        self.sync_chroma_check.setObjectName("BroadcastChromaCheck")
+        self.sync_chroma_check.setToolTip(
+            "송출 화면과 송출 LIVE를 크로마키 그린으로 가립니다. "
+            "해제하면 가장 최근에 TAKE한 송출 Live를 표시합니다."
+        )
         self.sync_previous_button = QPushButton("◀ 함께 이전")
         self.sync_previous_button.setProperty("variant", "ghost")
         self.sync_next_button = QPushButton("함께 다음 ▶")
@@ -486,6 +493,7 @@ class ControllerWindow(QMainWindow):
         sync_layout.addSpacing(20)
         sync_widgets: tuple[QWidget, ...] = (
             self.sync_auto_take_check,
+            self.sync_chroma_check,
             self.sync_previous_button,
             self.sync_next_button,
             self.sync_take_button,
@@ -882,6 +890,7 @@ class ControllerWindow(QMainWindow):
         self.screen_service.screens_changed.connect(self._screens_changed)
         self.sync_content_check.toggled.connect(self._linked_navigation_toggled)
         self.sync_auto_take_check.toggled.connect(self._linked_auto_take_toggled)
+        self.sync_chroma_check.toggled.connect(self._broadcast_chroma_toggled)
         self.sync_previous_button.clicked.connect(lambda: self.move_linked_previews(-1))
         self.sync_next_button.clicked.connect(lambda: self.move_linked_previews(1))
         self.sync_take_button.clicked.connect(self.take_linked_previews)
@@ -1566,6 +1575,19 @@ class ControllerWindow(QMainWindow):
             "준비가 끝나면 TAKE BOTH를 자동 실행합니다."
         )
 
+    def _effective_live_content(self, role: ChannelRole) -> Content:
+        if role is ChannelRole.BROADCAST and self.sync_chroma_check.isChecked():
+            return BROADCAST_CHROMA_CONTENT
+        return self.state.channel(role).live_content
+
+    def _broadcast_chroma_toggled(self, enabled: bool) -> None:
+        self._push_live(ChannelRole.BROADCAST)
+        self.status.setText(
+            "송출 화면을 크로마키 그린으로 전환했습니다."
+            if enabled
+            else "크로마키 해제 · 최신 송출 Live를 복원했습니다."
+        )
+
     def _pdf_link_mode_changed(self, enabled: bool) -> None:
         self.settings.pdf_link_outputs = enabled
         if enabled and self.sync_content_check.isChecked():
@@ -1984,7 +2006,9 @@ class ControllerWindow(QMainWindow):
                     profile,
                     self.settings.simulation_dpr,
                 )
-                self.broadcast_simulator.set_content(self.state.broadcast.live_content)
+                self.broadcast_simulator.set_content(
+                    self._effective_live_content(ChannelRole.BROADCAST)
+                )
                 self.broadcast_simulator.show()
             else:
                 self._disconnect_role(ChannelRole.BROADCAST, "가상 송출 화면 연결 해제")
@@ -2022,7 +2046,9 @@ class ControllerWindow(QMainWindow):
             return False
         self.broadcast_output = BroadcastOutputWindow(self.coordinator)
         self.venue_output = VenueOutputWindow(self.coordinator)
-        self.broadcast_output.set_content(self.state.broadcast.live_content)
+        self.broadcast_output.set_content(
+            self._effective_live_content(ChannelRole.BROADCAST)
+        )
         self.venue_output.set_content(self.state.venue.live_content)
         self.broadcast_output.start_on_screen(broadcast_screen)
         self.venue_output.start_on_screen(venue_screen)
@@ -2070,7 +2096,7 @@ class ControllerWindow(QMainWindow):
         self.venue_simulator = None
 
     def _push_live(self, role: ChannelRole) -> None:
-        content = self.state.channel(role).live_content
+        content = self._effective_live_content(role)
         fade = FIXED_OUTPUT_FADE_DURATION_MS
         if role is ChannelRole.BROADCAST:
             self.broadcast_live.set_content(content, fade)
@@ -2093,7 +2119,7 @@ class ControllerWindow(QMainWindow):
         channel = self.state.channel(role)
         if role is ChannelRole.BROADCAST:
             self.broadcast_preview.set_content(channel.preview_content)
-            self.broadcast_live.set_content(channel.live_content)
+            self.broadcast_live.set_content(self._effective_live_content(role))
         else:
             self.venue_preview.set_content(channel.preview_content)
             self.venue_live.set_content(channel.live_content)

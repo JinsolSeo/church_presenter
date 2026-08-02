@@ -890,6 +890,97 @@ def test_sync_checkbox_uses_one_indicator_and_compact_label(qtbot, tmp_path: Pat
     assert window.sync_content_check.text() == "동시 진행"
 
 
+def test_broadcast_chroma_override_only_replaces_broadcast_displays(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    broadcast_live = Content.subtitle("현재 송출", 0, SubtitleStyle(), "#00FF00")
+    venue_live = Content.solid_color("#0000FF")
+    broadcast_preview = Content.subtitle("다음 송출", 1, SubtitleStyle(), "#00FF00")
+    venue_preview = Content.black()
+    window.state.broadcast.live_content = broadcast_live
+    window.state.venue.live_content = venue_live
+    window.state.set_preview(ChannelRole.BROADCAST, broadcast_preview)
+    window.state.set_preview(ChannelRole.VENUE, venue_preview)
+    window._refresh_all()
+
+    assert window.sync_chroma_check.text() == "크로마키"
+    assert window.sync_chroma_check.objectName() == "BroadcastChromaCheck"
+    assert "가장 최근" in window.sync_chroma_check.toolTip()
+    assert not window.sync_chroma_check.isChecked()
+    qtbot.mouseClick(window.sync_chroma_check, Qt.MouseButton.LeftButton)
+
+    green = Content.solid_color("#00FF00")
+    assert window.state.broadcast.live_content == broadcast_live
+    assert window.state.venue.live_content == venue_live
+    assert window.state.broadcast.preview_content == broadcast_preview
+    assert window.state.venue.preview_content == venue_preview
+    assert window.broadcast_live.surface.target_content == green
+    assert window.venue_live.surface.target_content == venue_live
+
+    assert window.start_outputs()
+    assert window.broadcast_simulator is not None
+    assert window.venue_simulator is not None
+    assert window.broadcast_simulator.surface.target_content == green
+    assert window.venue_simulator.surface.target_content == venue_live
+
+
+def test_broadcast_chroma_override_reveals_latest_take_when_cleared(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    first = Content.subtitle("첫 화면", 0, SubtitleStyle(), "#00FF00")
+    latest = Content.subtitle("새 화면", 1, SubtitleStyle(), "#00FF00")
+    window.set_preview(ChannelRole.BROADCAST, first)
+    assert window.take(ChannelRole.BROADCAST)
+    window.sync_chroma_check.setChecked(True)
+
+    window.set_preview(ChannelRole.BROADCAST, latest)
+    assert window.take(ChannelRole.BROADCAST)
+
+    green = Content.solid_color("#00FF00")
+    assert window.state.broadcast.live_content == latest
+    assert window.broadcast_live.surface.target_content == green
+    assert window.broadcast_simulator is not None
+    assert window.broadcast_simulator.surface.target_content == green
+
+    window.sync_chroma_check.setChecked(False)
+
+    assert window.broadcast_live.surface.target_content == latest
+    assert window.broadcast_simulator.surface.target_content == latest
+    assert "최신 송출 Live" in window.status.text()
+
+
+def test_take_both_keeps_only_broadcast_visually_overridden(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    broadcast = Content.subtitle("찬양", 0, SubtitleStyle(), "#00FF00")
+    venue = Content.solid_color("#0000FF")
+    window.set_preview(ChannelRole.BROADCAST, broadcast)
+    window.set_preview(ChannelRole.VENUE, venue)
+    window.sync_content_check.setChecked(True)
+    window.sync_auto_take_check.setChecked(True)
+    window.sync_chroma_check.setChecked(True)
+
+    assert window.take_both()
+
+    green = Content.solid_color("#00FF00")
+    assert window.sync_content_check.isChecked()
+    assert window.sync_auto_take_check.isChecked()
+    assert window.state.broadcast.live_content == broadcast
+    assert window.state.venue.live_content == venue
+    assert window.broadcast_live.surface.target_content == green
+    assert window.venue_live.surface.target_content == venue
+    assert window.broadcast_simulator is not None
+    assert window.venue_simulator is not None
+    assert window.broadcast_simulator.surface.target_content == green
+    assert window.venue_simulator.surface.target_content == venue
+
+
 @pytest.mark.parametrize("width,height", [(1920, 1080), (1366, 768)])
 def test_pdf_action_buttons_match_page_move_metrics(
     qtbot,
