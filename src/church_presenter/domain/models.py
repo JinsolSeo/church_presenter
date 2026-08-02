@@ -700,7 +700,7 @@ class AppSettings:
     simulation_broadcast_connected: bool = True
     simulation_venue_connected: bool = True
     controller_geometry: str = ""
-    panel_layout: str = "tab:instant"
+    panel_layout: str = "tab:praise"
     workspace_splitter_state: str = ""
     current_theme: str = "light_professional"
     preview_preset_file: str = ""

@@ -68,6 +68,7 @@ from church_presenter.ui.panels.audio_panel import AudioPanel
 from church_presenter.ui.panels.bible_panel import BiblePanel
 from church_presenter.ui.panels.black_panel import BlackPanel
 from church_presenter.ui.panels.instant_panel import InstantPanel
+from church_presenter.ui.panels.misc_panel import MiscPanel
 from church_presenter.ui.panels.pdf_panel import PdfPanel
 from church_presenter.ui.panels.preview_preset_panel import PreviewPresetPanel
 from church_presenter.ui.panels.subtitle_panel import SubtitlePanel
@@ -545,6 +546,8 @@ class ControllerWindow(QMainWindow):
             self.settings.instant_text_key_color,
             self.settings.instant_text_group_size,
         )
+        self.black_panel = BlackPanel()
+        self.misc_panel = MiscPanel(self.instant_panel, self.black_panel)
         self.subtitle_sources = {
             "instant": self.instant_panel,
             "praise": self.subtitle_panel,
@@ -563,7 +566,6 @@ class ControllerWindow(QMainWindow):
             link_outputs=(self.settings.pdf_link_outputs and not self.settings.subtitle_pdf_linked),
             page_orders=self.settings.pdf_page_orders,
         )
-        self.black_panel = BlackPanel()
         self.video_panel = VideoPanel(
             self.video_manager,
             Path(self.settings.video_folder) if self.settings.video_folder else None,
@@ -581,21 +583,16 @@ class ControllerWindow(QMainWindow):
             self.settings.audio_sort_descending,
         )
         self._apply_audio_playlist_theme()
-        for content_panel, source_id, label in (
-            (self.instant_panel, "instant", "즉석"),
+        for panel, source_id, label in (
             (self.subtitle_panel, "praise", "찬양"),
             (self.bible_panel, "bible", "성경"),
-        ):
-            content_panel.setObjectName(f"ContentSource_{source_id}")
-            self.tabs.addTab(content_panel, label)
-        for media_panel, source_id, label in (
             (self.pdf_panel, "pdf", "PDF"),
             (self.video_panel, "video", "영상"),
             (self.audio_panel, "audio", "음악"),
-            (self.black_panel, "black", "빈 화면"),
+            (self.misc_panel, "misc", "기타"),
         ):
-            media_panel.setObjectName(f"ContentSource_{source_id}")
-            self.tabs.addTab(media_panel, label)
+            panel.setObjectName(f"ContentSource_{source_id}")
+            self.tabs.addTab(panel, label)
         self.tabs.setMinimumHeight(0)
         self.tabs.currentChanged.connect(self._content_tab_changed)
         self.pdf_panel.set_compact_actions(self.width() < 1100)
@@ -917,6 +914,8 @@ class ControllerWindow(QMainWindow):
         restored_stable_tab = False
         if self.settings.panel_layout.startswith("tab:"):
             source_id = self.settings.panel_layout.removeprefix("tab:")
+            if source_id in {"instant", "black"}:
+                source_id = "misc"
             for index in range(self.tabs.count()):
                 tab_widget = self.tabs.widget(index)
                 if (
@@ -1714,7 +1713,7 @@ class ControllerWindow(QMainWindow):
 
     def open_source_style_settings(self, source: str) -> None:
         style_source = source
-        from_instant = self.tabs.currentWidget() is self.instant_panel
+        from_instant = self.tabs.currentWidget() is self.misc_panel
         style = {
             "instant_text": self.instant_text_style,
             "praise": self.praise_style,

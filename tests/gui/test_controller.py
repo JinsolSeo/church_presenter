@@ -746,9 +746,9 @@ def test_blank_screen_presets_prepare_preview_before_take(
 ) -> None:
     window = make_controller(qtbot, tmp_path)
     panel = window.black_panel
-    tab_index = window.tabs.indexOf(panel)
+    tab_index = window.tabs.indexOf(window.misc_panel)
 
-    assert window.tabs.tabText(tab_index) == "빈 화면"
+    assert window.tabs.tabText(tab_index) == "기타"
     assert panel.preset_panel.maximumWidth() == 240
     qtbot.mouseClick(panel.preset_buttons["#00FF00"], Qt.MouseButton.LeftButton)
     assert window.state.broadcast.preview_content.kind is ContentType.BLACK

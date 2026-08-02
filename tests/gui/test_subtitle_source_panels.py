@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
@@ -66,22 +67,53 @@ def _window(qtbot, tmp_path: Path) -> ControllerWindow:
     return window
 
 
-def test_flat_source_tabs_are_concise_and_default_to_instant(qtbot, tmp_path: Path) -> None:
+def test_content_tabs_end_with_equal_width_misc_tools(qtbot, tmp_path: Path) -> None:
     window = _window(qtbot, tmp_path)
 
     assert [window.tabs.tabText(index) for index in range(window.tabs.count())] == [
-        "즉석",
         "찬양",
         "성경",
         "PDF",
         "영상",
         "음악",
-        "빈 화면",
+        "기타",
     ]
-    assert window.tabs.currentWidget() is window.instant_panel
+    assert window.tabs.currentWidget() is window.subtitle_panel
+    window.tabs.setCurrentWidget(window.misc_panel)
+    QApplication.processEvents()
+
+    assert window.tabs.indexOf(window.instant_panel) == -1
+    assert window.tabs.indexOf(window.black_panel) == -1
+    assert window.tabs.indexOf(window.misc_panel) == 5
+
+    layout = window.misc_panel.layout()
+    assert layout is not None
+    assert layout.stretch(0) == layout.stretch(1) == 1
+    assert window.instant_panel.parentWidget() is window.misc_panel.instant_section
+    assert window.black_panel.parentWidget() is window.misc_panel.blank_section
+    assert abs(
+        window.misc_panel.instant_section.width() - window.misc_panel.blank_section.width()
+    ) <= 1
+    assert window.instant_panel.mapTo(window.misc_panel, QPoint(0, 0)).x() < (
+        window.black_panel.mapTo(window.misc_panel, QPoint(0, 0)).x()
+    )
     assert not hasattr(window.instant_panel, "subtabs")
     assert not hasattr(window.instant_panel, "praise_edit")
     assert not hasattr(window.instant_panel, "book_combo")
+
+
+@pytest.mark.parametrize("legacy_source", ["instant", "black"])
+def test_legacy_tool_tab_settings_restore_misc_tab(
+    qtbot,
+    tmp_path: Path,
+    legacy_source: str,
+) -> None:
+    window = _window(qtbot, tmp_path)
+    window.settings.panel_layout = f"tab:{legacy_source}"
+
+    window._restore_panel_layout()
+
+    assert window.tabs.currentWidget() is window.misc_panel
 
 
 def test_praise_song_headers_follow_active_theme(qtbot, tmp_path: Path) -> None:
@@ -136,6 +168,7 @@ def test_instant_text_navigation_previews_then_requires_explicit_take(
     tmp_path: Path,
 ) -> None:
     window = _window(qtbot, tmp_path)
+    window.tabs.setCurrentWidget(window.misc_panel)
     window.instant_panel.text_edit.setPlainText("차를 빼 주세요")
 
     qtbot.mouseClick(window.instant_panel.previous_button, Qt.MouseButton.LeftButton)
@@ -160,7 +193,7 @@ def test_instant_text_navigation_previews_then_requires_explicit_take(
 def test_instant_navigation_group_is_centered_at_the_bottom(qtbot, tmp_path: Path) -> None:
     window = _window(qtbot, tmp_path)
     panel = window.instant_panel
-    window.tabs.setCurrentWidget(panel)
+    window.tabs.setCurrentWidget(window.misc_panel)
     QApplication.processEvents()
 
     group_left = panel.previous_button.mapTo(panel, QPoint(0, 0)).x()
@@ -501,7 +534,7 @@ def test_returning_from_instant_restores_prepared_preview_but_keeps_live(
     window.tabs.setCurrentWidget(window.subtitle_panel)
     window.subtitle_panel.restore_preview()
 
-    window.tabs.setCurrentWidget(window.instant_panel)
+    window.tabs.setCurrentWidget(window.misc_panel)
     window.instant_panel.text_edit.setPlainText("즉석 공지")
     window.instant_panel.preview_current()
     window.take(ChannelRole.BROADCAST)
