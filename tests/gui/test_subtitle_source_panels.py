@@ -448,7 +448,7 @@ def test_instant_text_style_dialog_applies_and_persists_group_size(
             return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(controller_window_module, "SubtitleStyleDialog", AcceptedStyleDialog)
-    window.tabs.setCurrentWidget(panel)
+    window.tabs.setCurrentWidget(window.misc_panel)
 
     window.open_source_style_settings("instant_text")
 
