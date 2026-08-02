@@ -705,6 +705,9 @@ class ControllerWindow(QMainWindow):
         compact = size.width() < COMPACT_DENSITY_WIDTH or size.height() <= COMPACT_DENSITY_HEIGHT
         density = "compact" if compact else "normal"
         self.sync_title.setVisible(size.width() >= 1000)
+        narrow_sync_controls = size.width() < 900
+        self.sync_previous_button.setText("◀ 이전" if narrow_sync_controls else "◀ 함께 이전")
+        self.sync_next_button.setText("다음 ▶" if narrow_sync_controls else "함께 다음 ▶")
         if density == self._ui_density:
             return
         self._ui_density = density
