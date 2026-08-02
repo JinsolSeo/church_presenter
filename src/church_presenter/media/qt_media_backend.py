@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtMultimedia import (
@@ -14,7 +14,12 @@ from PySide6.QtMultimedia import (
 )
 
 from church_presenter.domain.enums import PlaybackStatus
-from church_presenter.media.base import MediaPlaybackBackend
+from church_presenter.media.base import MediaPlaybackBackend, MediaSource
+from church_presenter.media.youtube_resolver import (
+    ResolvedYouTubeStream,
+    YouTubeWorkerService,
+    validate_youtube_url,
+)
 
 
 class QtMediaBackend(MediaPlaybackBackend):
@@ -28,13 +33,14 @@ class QtMediaBackend(MediaPlaybackBackend):
     ) -> None:
         super().__init__()
         self._audio_device_resolver = audio_device_resolver
-        self._path: Path | None = None
+        self._path: MediaSource | None = None
         self._status = PlaybackStatus.UNLOADED
         self._load_generation = 0
         self._load_pending = False
         self._source_started = False
         self._priming_video = False
         self._accept_video_frames = False
+        self._youtube_request_id = ""
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
@@ -42,6 +48,10 @@ class QtMediaBackend(MediaPlaybackBackend):
         if self.video_sink is not None:
             self.player.setVideoOutput(self.video_sink)
             self.video_sink.videoFrameChanged.connect(self._video_frame_changed)
+        self.youtube_worker = YouTubeWorkerService() if video else None
+        if self.youtube_worker is not None:
+            self.youtube_worker.resolved.connect(self._youtube_resolved)
+            self.youtube_worker.failed.connect(self._youtube_failed)
         self.player.mediaStatusChanged.connect(self._media_status_changed)
         self.player.playbackStateChanged.connect(self._playback_state_changed)
         self.player.positionChanged.connect(
@@ -52,8 +62,7 @@ class QtMediaBackend(MediaPlaybackBackend):
         )
         self.player.errorOccurred.connect(self._error_occurred)
 
-    def load(self, path: Path) -> None:
-        resolved = path.expanduser().resolve()
+    def load(self, path: MediaSource) -> None:
         # Invalidate and silence the old source before validating the new one.
         # Failed source changes must not leave earlier media playing behind an
         # ERROR state.
@@ -65,6 +74,30 @@ class QtMediaBackend(MediaPlaybackBackend):
         self._accept_video_frames = False
         self.player.stop()
         self.player.setSource(QUrl())
+        if self._youtube_request_id and self.youtube_worker is not None:
+            self.youtube_worker.cancel(self._youtube_request_id)
+        self._youtube_request_id = ""
+        if isinstance(path, str):
+            try:
+                source = validate_youtube_url(path)
+            except ValueError as error:
+                self._path = path
+                self._emit_error(str(error))
+                return
+            self._path = source
+            self._load_pending = True
+            self._set_status(PlaybackStatus.LOADING)
+            if self.youtube_worker is None:
+                self._emit_error("YouTube 영상 backend이 준비되지 않았습니다.")
+                return
+            self._youtube_request_id = uuid4().hex
+            if not self.youtube_worker.request_video_stream(
+                self._youtube_request_id,
+                source,
+            ):
+                self._emit_error("YouTube 영상 준비 요청을 시작하지 못했습니다.")
+            return
+        resolved = path.expanduser().resolve()
         self._path = resolved
         if not resolved.is_file():
             self._emit_error("미디어 파일을 찾을 수 없습니다.")
@@ -76,7 +109,11 @@ class QtMediaBackend(MediaPlaybackBackend):
         # QMediaPlayer may treat setSource() with the current URL as a no-op.
         # Clearing first also flushes decoded frames from the previous cue.
         self._set_status(PlaybackStatus.LOADING)
-        QTimer.singleShot(0, lambda: self._start_source(generation, resolved))
+        media_url = QUrl.fromLocalFile(str(resolved))
+        QTimer.singleShot(
+            0,
+            lambda: self._start_source(generation, resolved, media_url),
+        )
 
     def play(self) -> None:
         if self._path is None:
@@ -92,6 +129,10 @@ class QtMediaBackend(MediaPlaybackBackend):
         self._load_pending = False
         self._source_started = False
         self._priming_video = False
+        self._accept_video_frames = False
+        if self._youtube_request_id and self.youtube_worker is not None:
+            self.youtube_worker.cancel(self._youtube_request_id)
+        self._youtube_request_id = ""
         self.player.stop()
         self.player.setPosition(0)
         self._set_status(PlaybackStatus.STOPPED)
@@ -123,8 +164,13 @@ class QtMediaBackend(MediaPlaybackBackend):
         self._source_started = False
         self._priming_video = False
         self._accept_video_frames = False
+        if self._youtube_request_id and self.youtube_worker is not None:
+            self.youtube_worker.cancel(self._youtube_request_id)
+        self._youtube_request_id = ""
         self.player.stop()
         self.player.setSource(QUrl())
+        if self.youtube_worker is not None:
+            self.youtube_worker.close()
         self._path = None
         self._set_status(PlaybackStatus.UNLOADED)
 
@@ -135,6 +181,7 @@ class QtMediaBackend(MediaPlaybackBackend):
         return (
             f"status={self._status.value}, media_status={media_status}, "
             f"playback_state={playback_state}, load_pending={self._load_pending}, "
+            f"youtube_pending={bool(self._youtube_request_id)}, "
             f"priming={self._priming_video}, position_ms={self.player.position()}, "
             f"duration_ms={self.player.duration()}, error={error}"
         )
@@ -144,7 +191,7 @@ class QtMediaBackend(MediaPlaybackBackend):
         return self._status
 
     @property
-    def path(self) -> Path | None:
+    def path(self) -> MediaSource | None:
         return self._path
 
     def _set_status(self, status: PlaybackStatus) -> None:
@@ -153,11 +200,33 @@ class QtMediaBackend(MediaPlaybackBackend):
         self._status = status
         self.status_changed.emit(status)
 
-    def _start_source(self, generation: int, path: Path) -> None:
-        if generation != self._load_generation or self._path != path:
+    def _start_source(
+        self,
+        generation: int,
+        source: MediaSource,
+        media_url: QUrl,
+    ) -> None:
+        if generation != self._load_generation or self._path != source:
             return
         self._source_started = True
-        self.player.setSource(QUrl.fromLocalFile(str(path)))
+        self.player.setSource(media_url)
+
+    def _youtube_resolved(self, request_id: str, result: object) -> None:
+        if request_id != self._youtube_request_id or not isinstance(
+            result, ResolvedYouTubeStream
+        ):
+            return
+        self._youtube_request_id = ""
+        source = self._path
+        if not isinstance(source, str):
+            return
+        self._start_source(self._load_generation, source, QUrl(result.stream_url))
+
+    def _youtube_failed(self, request_id: str, message: str) -> None:
+        if request_id != self._youtube_request_id:
+            return
+        self._youtube_request_id = ""
+        self._emit_error(message)
 
     def _media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
         if status in (

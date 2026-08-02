@@ -33,9 +33,9 @@ class ChannelState:
             if not content.pdf_path.is_file():
                 return False, "PDF file is unavailable."
         if content.kind is ContentType.VIDEO:
-            if content.video_path is None:
+            if content.video_source is None:
                 return False, "Video content is incomplete."
-            if not content.video_path.is_file():
+            if content.video_path is not None and not content.video_path.is_file():
                 return False, "Video file is unavailable."
         return True, ""
 

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_song",
+  "id": "grace_morning",
+  "title": "은혜의 아침",
+  "artist": "Church Presenter Sample",
+  "sections": [
+    {
+      "id": "verse_1",
+      "type": "verse",
+      "label": "Verse 1",
+      "lines": ["새 아침 밝아오면", "주님의 은혜를 노래해", "내 걸음 인도하시는", "그 사랑을 바라보네"]
+    },
+    {
+      "id": "verse_2",
+      "type": "verse",
+      "label": "Verse 2",
+      "lines": ["어둠이 머물러도", "주의 빛은 꺼지지 않아", "오늘도 나와 함께", "새 길을 열어 주시네"]
+    },
+    {
+      "id": "chorus",
+      "type": "chorus",
+      "label": "Chorus",
+      "lines": ["은혜로 걷네 은혜로 살리", "모든 순간 주를 의지해", "기쁨으로 주 이름 높이며", "새 노래로 찬양하리"]
+    },
+    {
+      "id": "bridge",
+      "type": "bridge",
+      "label": "Bridge",
+      "lines": ["변함없는 그 사랑", "영원토록 노래하리"]
+    }
+  ],
+  "default_sequence": ["verse_1", "chorus", "verse_2", "chorus", "bridge", "chorus"]
+}

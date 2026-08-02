@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -34,7 +35,13 @@ from PySide6.QtWidgets import (
 )
 
 from church_presenter.domain.enums import ChannelRole, ContentType, PauseReason, PlaybackStatus
-from church_presenter.domain.models import AppSettings, Content, PreviewPreset, SubtitleDocument
+from church_presenter.domain.models import (
+    AppSettings,
+    Content,
+    PreviewPreset,
+    SubtitleStyle,
+    default_bible_reference_style,
+)
 from church_presenter.domain.state import ApplicationState
 from church_presenter.media.audio_controller import AudioPlaybackController
 from church_presenter.media.base import MediaPlaybackBackend
@@ -47,6 +54,7 @@ from church_presenter.remote.input_dispatcher import RemoteInputDispatcher
 from church_presenter.remote.network_service import RemoteNetworkService
 from church_presenter.rendering.output_surface import AspectRatioContainer, OutputSurface
 from church_presenter.services.audio_device_service import AudioDeviceService
+from church_presenter.services.bible_service import BibleRepository
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import ScreenService, validate_role_assignment
 from church_presenter.services.settings_service import SettingsService
@@ -57,7 +65,9 @@ from church_presenter.ui.dialogs.subtitle_style_dialog import SubtitleStyleDialo
 from church_presenter.ui.labels import channel_label
 from church_presenter.ui.output_window import BroadcastOutputWindow, VenueOutputWindow
 from church_presenter.ui.panels.audio_panel import AudioPanel
+from church_presenter.ui.panels.bible_panel import BiblePanel
 from church_presenter.ui.panels.black_panel import BlackPanel
+from church_presenter.ui.panels.instant_panel import InstantPanel
 from church_presenter.ui.panels.pdf_panel import PdfPanel
 from church_presenter.ui.panels.preview_preset_panel import PreviewPresetPanel
 from church_presenter.ui.panels.subtitle_panel import SubtitlePanel
@@ -140,11 +150,7 @@ class ChannelMonitor(QFrame):
             self.container.setMinimumSize(160, 90)
 
     def set_content(self, content: Content, fade_duration_ms: int = 0) -> None:
-        mode = (
-            "BLANK"
-            if content.kind is ContentType.SOLID_COLOR
-            else content.kind.value.upper()
-        )
+        mode = "BLANK" if content.kind is ContentType.SOLID_COLOR else content.kind.value.upper()
         self.mode.setText(mode)
         if content != self.surface.target_content:
             self.surface.set_content(content, fade_duration_ms)
@@ -185,15 +191,38 @@ class ControllerWindow(QMainWindow):
         theme_manager: ThemeManager | None = None,
     ) -> None:
         super().__init__()
-        self.setDockOptions(
-            self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks
-        )
+        self.setDockOptions(self.dockOptions() & ~QMainWindow.DockOption.AnimatedDocks)
         self.setObjectName("ControllerWindow")
         self.application = application
         self.screen_service = screen_service
         self.settings_service = settings_service
         self.settings = settings
         self.settings.fade_duration_ms = FIXED_OUTPUT_FADE_DURATION_MS
+        self.bible_repository: BibleRepository | None = None
+        self.bible_path: Path | None = None
+        if settings.bible_file:
+            candidate_bible = Path(settings.bible_file).expanduser()
+            if candidate_bible.is_file():
+                try:
+                    self.bible_repository = BibleRepository.load(candidate_bible)
+                    self.bible_path = candidate_bible.resolve()
+                except (OSError, UnicodeError, KeyError, TypeError, ValueError):
+                    LOGGER.exception("Could not restore Bible JSON")
+        if self.bible_repository is None:
+            try:
+                self.bible_repository = BibleRepository.load_bundled()
+                self.bible_path = Path(
+                    "src/church_presenter/assets/bibles/new_korean_translation.json"
+                ).resolve()
+            except (
+                OSError,
+                UnicodeError,
+                KeyError,
+                ModuleNotFoundError,
+                TypeError,
+                ValueError,
+            ):
+                pass
         self.theme_manager = theme_manager or ThemeManager()
         if not self.theme_manager.current_theme_id():
             applied_theme = self.theme_manager.apply_theme(application, settings.current_theme)
@@ -206,9 +235,7 @@ class ControllerWindow(QMainWindow):
             candidate = Path(settings.preview_preset_file).expanduser()
             if candidate.is_file():
                 try:
-                    self.preview_presets = self.settings_service.load_preview_preset_file(
-                        candidate
-                    )
+                    self.preview_presets = self.settings_service.load_preview_preset_file(candidate)
                     self.preview_preset_file = candidate.resolve()
                 except (OSError, UnicodeError, KeyError, ValueError, TypeError) as error:
                     LOGGER.exception("Could not restore worship-order file")
@@ -287,9 +314,7 @@ class ControllerWindow(QMainWindow):
             self,
         )
         self.remote_connection_dialog: RemoteConnectionDialog | None = None
-        self.remote_service.client_count_changed.connect(
-            self.frame_capture.set_client_count
-        )
+        self.remote_service.client_count_changed.connect(self.frame_capture.set_client_count)
         self.remote_service.input_received.connect(
             self.remote_input_dispatcher.dispatch,
             Qt.ConnectionType.QueuedConnection,
@@ -443,9 +468,7 @@ class ControllerWindow(QMainWindow):
         self.sync_content_check.setChecked(self.settings.subtitle_pdf_linked)
         self.sync_auto_take_check = QCheckBox("바로 Live")
         self.sync_auto_take_check.setObjectName("LinkedAutoTakeCheck")
-        self.sync_auto_take_check.setChecked(
-            self.settings.linked_navigation_auto_take
-        )
+        self.sync_auto_take_check.setChecked(self.settings.linked_navigation_auto_take)
         self.sync_auto_take_check.setToolTip(
             "이전/다음 입력 후 두 Preview가 준비되면 TAKE BOTH를 자동 실행합니다."
         )
@@ -478,15 +501,55 @@ class ControllerWindow(QMainWindow):
             else default_preset
         )
         self.subtitle_style = presets[preset_name]
+        self.praise_style = (
+            SubtitleStyle.from_dict(self.settings.praise_style)
+            if self.settings.praise_style
+            else self.subtitle_style
+        )
+        self.bible_style = (
+            SubtitleStyle.from_dict(self.settings.bible_style)
+            if self.settings.bible_style
+            else self.subtitle_style
+        )
+        self.bible_reference_style = (
+            SubtitleStyle.from_dict(self.settings.bible_reference_style)
+            if self.settings.bible_reference_style
+            else default_bible_reference_style()
+        )
+        self.instant_text_style = (
+            SubtitleStyle.from_dict(self.settings.instant_text_style)
+            if self.settings.instant_text_style
+            else self.subtitle_style
+        )
         if warning:
             self.status.setText(warning)
         self.tabs = ResponsiveContentTabs()
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.subtitle_panel = SubtitlePanel(
-            self.subtitle_style,
-            self.settings.key_color,
+            self.praise_style,
+            self.settings.praise_key_color,
             self.settings.subtitle_group_size,
+            Path(self.settings.song_folder) if self.settings.song_folder else None,
         )
+        self.praise_panel = self.subtitle_panel
+        self.bible_panel = BiblePanel(
+            self.bible_style,
+            self.bible_reference_style,
+            self.settings.bible_key_color,
+            self.settings.bible_group_size,
+            self.bible_repository,
+            self.bible_path,
+        )
+        self.instant_panel = InstantPanel(
+            self.instant_text_style,
+            self.settings.instant_text_key_color,
+            self.settings.instant_text_group_size,
+        )
+        self.subtitle_sources = {
+            "instant": self.instant_panel,
+            "praise": self.subtitle_panel,
+            "bible": self.bible_panel,
+        }
         self._apply_subtitle_card_theme()
         pdf_folder = Path(self.settings.pdf_folder) if self.settings.pdf_folder else None
         self.pdf_panel = PdfPanel(
@@ -518,20 +581,29 @@ class ControllerWindow(QMainWindow):
             self.settings.audio_sort_descending,
         )
         self._apply_audio_playlist_theme()
-        self.tabs.addTab(self.subtitle_panel, "자막")
-        self.tabs.addTab(self.pdf_panel, "PDF")
-        self.tabs.addTab(self.video_panel, "영상")
-        self.tabs.addTab(self.audio_panel, "배경음악")
-        self.tabs.addTab(self.black_panel, "빈 화면")
+        for content_panel, source_id, label in (
+            (self.instant_panel, "instant", "즉석"),
+            (self.subtitle_panel, "praise", "찬양"),
+            (self.bible_panel, "bible", "성경"),
+        ):
+            content_panel.setObjectName(f"ContentSource_{source_id}")
+            self.tabs.addTab(content_panel, label)
+        for media_panel, source_id, label in (
+            (self.pdf_panel, "pdf", "PDF"),
+            (self.video_panel, "video", "영상"),
+            (self.audio_panel, "audio", "음악"),
+            (self.black_panel, "black", "빈 화면"),
+        ):
+            media_panel.setObjectName(f"ContentSource_{source_id}")
+            self.tabs.addTab(media_panel, label)
         self.tabs.setMinimumHeight(0)
+        self.tabs.currentChanged.connect(self._content_tab_changed)
         self.pdf_panel.set_compact_actions(self.width() < 1100)
         self.content_scroll = QScrollArea()
         self.content_scroll.setObjectName("ContentPanelScroll")
         self.content_scroll.setWidgetResizable(True)
         self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.content_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.content_scroll.setMinimumHeight(170)
         self.content_scroll.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -543,9 +615,7 @@ class ControllerWindow(QMainWindow):
         self.workspace_splitter.setStretchFactor(1, 2)
         self._workspace_splitter_user_adjusted = False
         self._workspace_splitter_state_restored = False
-        self.workspace_splitter.splitterMoved.connect(
-            self._workspace_splitter_moved
-        )
+        self.workspace_splitter.splitterMoved.connect(self._workspace_splitter_moved)
         layout.addWidget(self.workspace_splitter, 1)
 
         self.preview_preset_panel = PreviewPresetPanel(self.preview_presets)
@@ -564,9 +634,7 @@ class ControllerWindow(QMainWindow):
         self.preview_preset_dock.setWidget(self.preview_preset_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_preset_dock)
         self.preview_preset_dock.visibilityChanged.connect(self._schedule_scroll_fit)
-        self.preview_preset_dock.visibilityChanged.connect(
-            self._preview_preset_visibility_changed
-        )
+        self.preview_preset_dock.visibilityChanged.connect(self._preview_preset_visibility_changed)
 
         settings_button.clicked.connect(self.open_screen_settings)
         self.remote_connection_button.clicked.connect(self._show_remote_connection)
@@ -577,6 +645,13 @@ class ControllerWindow(QMainWindow):
     def _schedule_scroll_fit(self, _visible: bool) -> None:
         """Settle dock-driven central geometry within the same event-loop cycle."""
         QTimer.singleShot(0, self._fit_scroll_content)
+
+    def _content_tab_changed(self, _index: int) -> None:
+        panel = self.tabs.currentWidget()
+        if panel is self.subtitle_panel:
+            self.subtitle_panel.restore_preview()
+        elif panel is self.bible_panel:
+            self.bible_panel.restore_preview()
 
     def _preview_preset_visibility_changed(self, visible: bool) -> None:
         if not visible and not self._closing and self.isVisible():
@@ -607,10 +682,7 @@ class ControllerWindow(QMainWindow):
 
     def _apply_default_workspace_split(self) -> None:
         """Give output monitoring priority until the operator moves the splitter."""
-        if (
-            self._workspace_splitter_user_adjusted
-            or self._workspace_splitter_state_restored
-        ):
+        if self._workspace_splitter_user_adjusted or self._workspace_splitter_state_restored:
             return
         total = self.workspace_splitter.height()
         if total <= 0:
@@ -625,10 +697,7 @@ class ControllerWindow(QMainWindow):
 
     def _apply_ui_density(self, size: QSize) -> None:
         """Automatically switch Controller chrome between normal and compact density."""
-        compact = (
-            size.width() < COMPACT_DENSITY_WIDTH
-            or size.height() <= COMPACT_DENSITY_HEIGHT
-        )
+        compact = size.width() < COMPACT_DENSITY_WIDTH or size.height() <= COMPACT_DENSITY_HEIGHT
         density = "compact" if compact else "normal"
         self.sync_title.setVisible(size.width() >= 1000)
         if density == self._ui_density:
@@ -727,25 +796,17 @@ class ControllerWindow(QMainWindow):
         """Keep item-level brushes aligned with the active JSON theme."""
         self.subtitle_panel.set_card_theme(
             live_background=str(self.theme_manager.current_value("colors", "live")),
-            preview_background=str(
-                self.theme_manager.current_value("colors", "accent")
-            ),
+            preview_background=str(self.theme_manager.current_value("colors", "accent")),
             text=str(self.theme_manager.current_value("colors", "text_primary")),
-            active_text=str(
-                self.theme_manager.current_value("colors", "text_on_accent")
-            ),
+            active_text=str(self.theme_manager.current_value("colors", "text_on_accent")),
         )
 
     def _apply_audio_playlist_theme(self) -> None:
         """Keep the current-track brush aligned with the active JSON theme."""
         self.audio_panel.set_playlist_theme(
-            active_background=str(
-                self.theme_manager.current_value("colors", "accent")
-            ),
+            active_background=str(self.theme_manager.current_value("colors", "accent")),
             text=str(self.theme_manager.current_value("colors", "text_primary")),
-            active_text=str(
-                self.theme_manager.current_value("colors", "text_on_accent")
-            ),
+            active_text=str(self.theme_manager.current_value("colors", "text_on_accent")),
         )
 
     def _connect_signals(self) -> None:
@@ -753,8 +814,28 @@ class ControllerWindow(QMainWindow):
             lambda content: self.set_preview(ChannelRole.BROADCAST, content, True)
         )
         self.subtitle_panel.take_requested.connect(lambda: self.take(ChannelRole.BROADCAST))
-        self.subtitle_panel.style_requested.connect(self.open_style_settings)
-        self.subtitle_panel.document_changed.connect(self._subtitle_document_changed)
+        self.subtitle_panel.style_requested.connect(
+            lambda: self.open_source_style_settings("praise")
+        )
+        self.subtitle_panel.status_changed.connect(self.status.setText)
+        self.subtitle_panel.settings_changed.connect(self._praise_settings_changed)
+        self.bible_panel.preview_requested.connect(
+            lambda content: self.set_preview(ChannelRole.BROADCAST, content, True)
+        )
+        self.bible_panel.take_requested.connect(lambda: self.take(ChannelRole.BROADCAST))
+        self.bible_panel.style_requested.connect(lambda: self.open_source_style_settings("bible"))
+        self.bible_panel.reference_style_requested.connect(
+            lambda: self.open_source_style_settings("bible_reference")
+        )
+        self.bible_panel.status_changed.connect(self.status.setText)
+        self.bible_panel.bible_file_changed.connect(self._bible_file_changed)
+        self.bible_panel.plan_file_changed.connect(self._bible_plan_file_changed)
+        self.instant_panel.preview_requested.connect(
+            lambda content: self.set_preview(ChannelRole.BROADCAST, content, True)
+        )
+        self.instant_panel.take_requested.connect(lambda: self.take(ChannelRole.BROADCAST))
+        self.instant_panel.style_requested.connect(self.open_source_style_settings)
+        self.instant_panel.status_changed.connect(self.status.setText)
         self.pdf_panel.preview_requested.connect(self.set_preview)
         self.pdf_panel.preview_ready.connect(self.mark_preview_ready)
         self.pdf_panel.send_to_both_requested.connect(self.send_to_both)
@@ -810,37 +891,53 @@ class ControllerWindow(QMainWindow):
         self.preview_preset_panel.update_requested.connect(self.update_preview_preset)
         self.preview_preset_panel.delete_requested.connect(self.delete_preview_preset)
         self.preview_preset_panel.move_requested.connect(self.move_preview_preset)
-        self.preview_preset_panel.open_file_requested.connect(
-            self.choose_preview_preset_file
-        )
-        self.preview_preset_panel.save_file_as_requested.connect(
-            self.save_preview_preset_file_as
-        )
+        self.preview_preset_panel.open_file_requested.connect(self.choose_preview_preset_file)
+        self.preview_preset_panel.save_file_as_requested.connect(self.save_preview_preset_file_as)
         self._linked_navigation_toggled(self.sync_content_check.isChecked())
         self._linked_auto_take_toggled(self.sync_auto_take_check.isChecked())
 
     def _restore_content(self) -> None:
-        last_subtitle = (
-            Path(self.settings.last_subtitle_file) if self.settings.last_subtitle_file else None
+        last_praise_plan = (
+            Path(self.settings.last_praise_plan_file)
+            if self.settings.last_praise_plan_file
+            else None
         )
-        if last_subtitle and last_subtitle.is_file():
-            self.subtitle_panel.load_path(last_subtitle, warn=False)
+        if last_praise_plan and last_praise_plan.is_file():
+            self.subtitle_panel.load_plan_path(last_praise_plan, warn=False)
+        last_bible_plan = (
+            Path(self.settings.last_bible_plan_file) if self.settings.last_bible_plan_file else None
+        )
+        if last_bible_plan and last_bible_plan.is_file():
+            self.bible_panel.load_plan_path(last_bible_plan)
 
     def _restore_panel_layout(self) -> None:
+        restored_stable_tab = False
+        if self.settings.panel_layout.startswith("tab:"):
+            source_id = self.settings.panel_layout.removeprefix("tab:")
+            for index in range(self.tabs.count()):
+                tab_widget = self.tabs.widget(index)
+                if (
+                    tab_widget is not None
+                    and tab_widget.objectName() == f"ContentSource_{source_id}"
+                ):
+                    self.tabs.setCurrentIndex(index)
+                    restored_stable_tab = True
+                    break
         try:
             prefix, index_text = self.settings.panel_layout.split(":", maxsplit=1)
             index = int(index_text)
         except (ValueError, AttributeError):
             prefix = ""
             index = -1
-        if prefix == "tabs" and 0 <= index < self.tabs.count():
-            self.tabs.setCurrentIndex(index)
+        if not restored_stable_tab and prefix == "tabs" and index >= 0:
+            # Legacy tab 0 was the old subtitle panel, now Praise.
+            mapped = 1 if index == 0 else index + 2
+            if 0 <= mapped < self.tabs.count():
+                self.tabs.setCurrentIndex(mapped)
         if self.settings.workspace_splitter_state:
             try:
                 restored = self.workspace_splitter.restoreState(
-                    QByteArray.fromBase64(
-                        self.settings.workspace_splitter_state.encode("ascii")
-                    )
+                    QByteArray.fromBase64(self.settings.workspace_splitter_state.encode("ascii"))
                 )
             except (ValueError, UnicodeError):
                 restored = False
@@ -901,12 +998,19 @@ class ControllerWindow(QMainWindow):
 
     def save_preview_preset(self, name: str) -> bool:
         """Save or overwrite the current two-channel Preview snapshot."""
+        if any(
+            content.subtitle_source.startswith("instant")
+            for content in (
+                self.state.broadcast.preview_content,
+                self.state.venue.preview_content,
+            )
+        ):
+            self.status.setText("즉석 콘텐츠는 예배 순서에 저장할 수 없습니다.")
+            return False
         try:
             preset = PreviewPreset(
                 name=name,
-                broadcast_content=(
-                    self.state.broadcast.preview_content.as_preset_reference()
-                ),
+                broadcast_content=(self.state.broadcast.preview_content.as_preset_reference()),
                 venue_content=self.state.venue.preview_content.as_preset_reference(),
             )
         except ValueError as error:
@@ -955,7 +1059,13 @@ class ControllerWindow(QMainWindow):
             None,
         )
         if subtitle_position is not None:
-            self.subtitle_panel.set_preview_position(subtitle_position)
+            subtitle_content = next(
+                content for content in contents.values() if content.kind is ContentType.SUBTITLE_KEY
+            )
+            if subtitle_content.subtitle_source == "bible":
+                self.bible_panel.navigate(subtitle_position)
+            else:
+                self.subtitle_panel.set_preview_position(subtitle_position)
         pdf_position = next(
             (
                 content.pdf_page
@@ -977,17 +1087,17 @@ class ControllerWindow(QMainWindow):
             role for role, content in contents.items() if content.kind is ContentType.VIDEO
         ]
         if len(video_roles) == 2 and (
-            contents[ChannelRole.BROADCAST].video_path
-            == contents[ChannelRole.VENUE].video_path
+            contents[ChannelRole.BROADCAST].video_source
+            == contents[ChannelRole.VENUE].video_source
         ):
-            video_path = contents[ChannelRole.BROADCAST].video_path
-            assert video_path is not None
-            self.video_manager.cue_both(video_path)
+            video_source = contents[ChannelRole.BROADCAST].video_source
+            assert video_source is not None
+            self.video_manager.cue_both(video_source)
         else:
             for role in video_roles:
-                video_path = contents[role].video_path
-                assert video_path is not None
-                self.video_manager.cue_preview(role, video_path)
+                video_source = contents[role].video_source
+                assert video_source is not None
+                self.video_manager.cue_preview(role, video_source)
 
         preparing_pdf = False
         for role, content in contents.items():
@@ -1007,9 +1117,7 @@ class ControllerWindow(QMainWindow):
         self.preview_preset_panel.mark_applied(name)
         self._focus_linked_controls()
         if preparing_pdf or video_roles:
-            self.status.setText(
-                f"'{name}' Preview 준비 중 · 완료 후 중앙 TAKE BOTH를 누르십시오."
-            )
+            self.status.setText(f"'{name}' Preview 준비 중 · 완료 후 중앙 TAKE BOTH를 누르십시오.")
         else:
             self.status.setText(
                 f"'{name}' Preview 적용 완료 · 확인 후 중앙 TAKE BOTH를 누르십시오."
@@ -1050,9 +1158,7 @@ class ControllerWindow(QMainWindow):
             self.settings_service.save(self.settings)
         except OSError:
             LOGGER.exception("Could not remember worship-order file %s", path)
-            self.status.setText(
-                "예배 순서 파일은 열었지만 마지막 파일 설정은 저장하지 못했습니다."
-            )
+            self.status.setText("예배 순서 파일은 열었지만 마지막 파일 설정은 저장하지 못했습니다.")
             return True
         self.status.setText(
             f"예배 순서 파일 기준으로 목록을 초기화했습니다: "
@@ -1088,19 +1194,13 @@ class ControllerWindow(QMainWindow):
                 "예배 순서 파일은 저장했지만 마지막 파일 설정은 저장하지 못했습니다."
             )
             return True
-        self.status.setText(
-            f"예배 순서 파일 저장 완료: {self.preview_preset_file.name}"
-        )
+        self.status.setText(f"예배 순서 파일 저장 완료: {self.preview_preset_file.name}")
         return True
 
     def save_preview_preset_file_as(self) -> bool:
         """Choose a new path and save the active worship order."""
         suggested = (
-            str(
-                self.preview_preset_file.with_name(
-                    f"{self.preview_preset_file.stem}_수정본.json"
-                )
-            )
+            str(self.preview_preset_file.with_name(f"{self.preview_preset_file.stem}_수정본.json"))
             if self.preview_preset_file is not None
             else str(Path.home() / "예배_순서.json")
         )
@@ -1118,8 +1218,7 @@ class ControllerWindow(QMainWindow):
         if preset is None:
             return False
         if any(
-            candidate.name.casefold() == new_name.strip().casefold()
-            and candidate.name != old_name
+            candidate.name.casefold() == new_name.strip().casefold() and candidate.name != old_name
             for candidate in self.preview_presets
         ):
             self.status.setText("프리셋 이름 변경 실패: 같은 이름이 이미 있습니다.")
@@ -1230,18 +1329,28 @@ class ControllerWindow(QMainWindow):
                 continue
             if cue.kind is ContentType.SUBTITLE_KEY:
                 position = cue.subtitle_card_index
-                cards = self.subtitle_panel.document.cards
-                if position is None or not 0 <= position < len(cards):
+                if cue.subtitle_source == "bible":
+                    try:
+                        resolved[role] = self.bible_panel.content_for_reference(
+                            cue.subtitle_reference
+                        )
+                    except (KeyError, ValueError) as error:
+                        return None, f"{label} 성경 구절을 확인할 수 없습니다: {error}"
+                    continue
+                if cue.subtitle_source == "praise" and cue.subtitle_reference:
+                    try:
+                        resolved[role] = self.subtitle_panel.content_for_reference(
+                            cue.subtitle_reference
+                        )
+                    except (KeyError, ValueError) as error:
+                        return None, f"{label} 찬양 카드를 확인할 수 없습니다: {error}"
+                    continue
+                if position is None or not 0 <= position < self.subtitle_panel.output_count:
                     return None, (
                         f"{label} 자막 카드 {self._display_position(position)}가 "
-                        "현재 자막 문서에 없습니다."
+                        "현재 찬양 콘티에 없습니다."
                     )
-                resolved[role] = Content.subtitle(
-                    cards[position],
-                    position,
-                    self.subtitle_panel.subtitle_style,
-                    self.subtitle_panel.key_color,
-                )
+                resolved[role] = self.subtitle_panel._content_at(position)
                 continue
             if cue.kind is ContentType.PDF_PAGE:
                 position = cue.pdf_page
@@ -1250,16 +1359,19 @@ class ControllerWindow(QMainWindow):
                     return None, f"{label}에 사용할 PDF를 먼저 선택하십시오."
                 if position is None or not 0 <= position < self.pdf_panel.page_count:
                     return None, (
-                        f"{label} PDF {self._display_position(position)}쪽이 "
-                        "현재 PDF에 없습니다."
+                        f"{label} PDF {self._display_position(position)}쪽이 현재 PDF에 없습니다."
                     )
                 resolved[role] = Content.pdf(path, position)
                 continue
             if cue.kind is ContentType.VIDEO:
-                path = self.video_panel.selected_path
-                if path is None or not path.is_file():
+                source = self.video_panel.selected_source
+                if source is None or (isinstance(source, Path) and not source.is_file()):
                     return None, f"{label}에 사용할 영상을 먼저 선택하십시오."
-                resolved[role] = Content.video(path)
+                resolved[role] = (
+                    Content.youtube_video(source)
+                    if isinstance(source, str)
+                    else Content.video(source)
+                )
                 continue
             return None, f"{label} 콘텐츠 종류를 지원하지 않습니다: {cue.kind.value}"
         return resolved, ""
@@ -1313,8 +1425,7 @@ class ControllerWindow(QMainWindow):
     def _take_both_videos(self) -> bool:
         roles = (ChannelRole.BROADCAST, ChannelRole.VENUE)
         if any(
-            self.state.channel(role).preview_content.kind is not ContentType.VIDEO
-            for role in roles
+            self.state.channel(role).preview_content.kind is not ContentType.VIDEO for role in roles
         ):
             for role in roles:
                 if self.state.channel(role).preview_content.kind is not ContentType.VIDEO:
@@ -1329,8 +1440,8 @@ class ControllerWindow(QMainWindow):
         next_content = self.state.channel(role).preview_content
         previous_live = self.state.channel(role).live_content
         if next_content.kind is ContentType.VIDEO and (
-            next_content.video_path is None
-            or not self.video_manager.can_activate(role, next_content.video_path)
+            next_content.video_source is None
+            or not self.video_manager.can_activate(role, next_content.video_source)
         ):
             self.status.setText("TAKE 실패 · 영상 첫 프레임이 아직 준비되지 않았습니다.")
             return False
@@ -1343,8 +1454,8 @@ class ControllerWindow(QMainWindow):
             self._refresh_channel(role)
             return False
         if next_content.kind is ContentType.VIDEO:
-            assert next_content.video_path is not None
-            if not self.video_manager.activate_preview(role, next_content.video_path):
+            assert next_content.video_source is not None
+            if not self.video_manager.activate_preview(role, next_content.video_source):
                 self.state.channel(role).live_content = previous_live
                 self.status.setText("TAKE 실패 · 기존 Live 유지: 영상 Cue 활성화 실패")
                 self._refresh_channel(role)
@@ -1355,7 +1466,7 @@ class ControllerWindow(QMainWindow):
             role is ChannelRole.BROADCAST
             and self.state.broadcast.live_content.kind is ContentType.SUBTITLE_KEY
         ):
-            self.subtitle_panel.mark_live()
+            self._mark_subtitle_live(self.state.broadcast.live_content)
         if self.state.channel(role).live_content.kind is ContentType.PDF_PAGE:
             self.pdf_panel.mark_live(
                 role,
@@ -1375,8 +1486,8 @@ class ControllerWindow(QMainWindow):
         for role in (ChannelRole.BROADCAST, ChannelRole.VENUE):
             content = self.state.channel(role).preview_content
             if content.kind is ContentType.VIDEO and (
-                content.video_path is None
-                or not self.video_manager.can_activate(role, content.video_path)
+                content.video_source is None
+                or not self.video_manager.can_activate(role, content.video_source)
             ):
                 self.status.setText(
                     "TAKE BOTH 실패 · 양쪽 기존 Live 유지: 영상 Cue가 준비되지 않았습니다."
@@ -1398,8 +1509,8 @@ class ControllerWindow(QMainWindow):
         for role in (ChannelRole.BROADCAST, ChannelRole.VENUE):
             content = self.state.channel(role).live_content
             if content.kind is ContentType.VIDEO:
-                assert content.video_path is not None
-                if not self.video_manager.activate_preview(role, content.video_path):
+                assert content.video_source is not None
+                if not self.video_manager.activate_preview(role, content.video_source):
                     self.state.broadcast.live_content = previous[ChannelRole.BROADCAST]
                     self.state.venue.live_content = previous[ChannelRole.VENUE]
                     self.status.setText("TAKE BOTH 실패 · 양쪽 기존 Live 유지: 영상 활성화 실패")
@@ -1411,7 +1522,7 @@ class ControllerWindow(QMainWindow):
         self._push_live(ChannelRole.BROADCAST)
         self._push_live(ChannelRole.VENUE)
         if self.state.broadcast.live_content.kind is ContentType.SUBTITLE_KEY:
-            self.subtitle_panel.mark_live()
+            self._mark_subtitle_live(self.state.broadcast.live_content)
         if self.state.broadcast.live_content.kind is ContentType.PDF_PAGE:
             self.pdf_panel.mark_live(
                 ChannelRole.BROADCAST,
@@ -1469,7 +1580,7 @@ class ControllerWindow(QMainWindow):
             self.sync_content_check.setChecked(True)
         subtitle_active, pdf_roles = self._linked_preview_targets()
         if subtitle_active:
-            self.subtitle_panel.move_preview(offset)
+            self._move_active_subtitle(offset)
         if pdf_roles:
             self.pdf_panel.move_preview_for_roles(offset, pdf_roles)
         if not subtitle_active and not pdf_roles:
@@ -1484,7 +1595,7 @@ class ControllerWindow(QMainWindow):
             self.sync_content_check.setChecked(True)
         subtitle_active, pdf_roles = self._linked_preview_targets()
         if subtitle_active:
-            self.subtitle_panel.navigate(0)
+            self._navigate_active_subtitle(first=True)
         if pdf_roles:
             self.pdf_panel.navigate_first_for_roles(pdf_roles)
         self._show_linked_position()
@@ -1494,7 +1605,7 @@ class ControllerWindow(QMainWindow):
             self.sync_content_check.setChecked(True)
         subtitle_active, pdf_roles = self._linked_preview_targets()
         if subtitle_active:
-            self.subtitle_panel.navigate(len(self.subtitle_panel.document.cards) - 1)
+            self._navigate_active_subtitle(first=False)
         if pdf_roles:
             self.pdf_panel.navigate_last_for_roles(pdf_roles)
         self._show_linked_position()
@@ -1555,8 +1666,17 @@ class ControllerWindow(QMainWindow):
         return subtitle_active, pdf_roles
 
     def _show_linked_position(self) -> None:
-        subtitle_count = len(self.subtitle_panel.document.cards)
-        subtitle_position = str(self.subtitle_panel.preview_index + 1) if subtitle_count else "없음"
+        source = self.state.broadcast.preview_content.subtitle_source
+        if source == "bible":
+            subtitle_count = self.bible_panel.output_count
+            subtitle_index = self.bible_panel.preview_index
+        elif source == "instant_text":
+            subtitle_count = self.instant_panel.output_count
+            subtitle_index = self.instant_panel.preview_index
+        else:
+            subtitle_count = self.subtitle_panel.output_count
+            subtitle_index = self.subtitle_panel.preview_index
+        subtitle_position = str(subtitle_index + 1) if subtitle_count else "없음"
         pdf_position = (
             str(self.pdf_panel.preview_position + 1) if self.pdf_panel.page_order else "없음"
         )
@@ -1565,26 +1685,136 @@ class ControllerWindow(QMainWindow):
             f"PDF 순서 {pdf_position}/{len(self.pdf_panel.page_order) or '-'}"
         )
 
+    def _move_active_subtitle(self, offset: int) -> None:
+        source = self.state.broadcast.preview_content.subtitle_source
+        if source == "bible":
+            self.bible_panel.move_preview(offset)
+        elif source == "instant_text":
+            self.instant_panel.move_preview(offset)
+        elif not source.startswith("instant"):
+            self.subtitle_panel.move_preview(offset)
+
+    def _navigate_active_subtitle(self, *, first: bool) -> None:
+        source = self.state.broadcast.preview_content.subtitle_source
+        if source == "bible":
+            target = 0 if first else self.bible_panel.output_count - 1
+            self.bible_panel.navigate(target)
+        elif source == "instant_text":
+            target = 0 if first else self.instant_panel.output_count - 1
+            self.instant_panel.navigate(target)
+        elif not source.startswith("instant"):
+            target = 0 if first else self.subtitle_panel.output_count - 1
+            self.subtitle_panel.navigate(target)
+
     def open_style_settings(self) -> None:
+        self.open_source_style_settings("praise")
+
+    def open_source_style_settings(self, source: str) -> None:
+        style_source = source
+        from_instant = self.tabs.currentWidget() is self.instant_panel
+        style = {
+            "instant_text": self.instant_text_style,
+            "praise": self.praise_style,
+            "bible": self.bible_style,
+            "bible_reference": self.bible_reference_style,
+        }[style_source]
+        key_color = {
+            "instant_text": self.settings.instant_text_key_color,
+            "praise": self.settings.praise_key_color,
+            "bible": self.settings.bible_key_color,
+            "bible_reference": self.settings.bible_key_color,
+        }[style_source]
         dialog = SubtitleStyleDialog(
             self.settings_service,
             self.coordinator,
-            self.subtitle_panel.subtitle_style,
-            self.subtitle_panel.key_color,
+            style,
+            key_color,
             self.settings.current_style_preset,
-            self.subtitle_panel.document.group_size,
+            (
+                self.subtitle_panel.group_size
+                if style_source == "praise"
+                else self.bible_panel.group_size
+                if style_source == "bible"
+                else self.instant_panel.group_size
+                if style_source == "instant_text"
+                else 1
+            ),
             self,
+            preview_text="요한복음 3:16" if style_source == "bible_reference" else None,
+            reference_mode=style_source == "bible_reference",
+            group_label=(
+                "한 번에 표시할 절 수"
+                if style_source == "bible"
+                else "한 번에 표시할 자막 수"
+            ),
+            body_style=self.bible_style if style_source == "bible_reference" else None,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.subtitle_style = dialog.result_style
-        self.settings.key_color = dialog.result_key_color
+        if style_source == "instant_text":
+            self.instant_text_style = dialog.result_style
+            self.settings.instant_text_style = dialog.result_style.to_dict()
+            self.settings.instant_text_key_color = dialog.result_key_color
+            self.settings.instant_text_group_size = dialog.result_group_size
+            self.instant_panel.set_group_size(dialog.result_group_size)
+        elif style_source == "praise":
+            self.praise_style = dialog.result_style
+            self.settings.praise_style = dialog.result_style.to_dict()
+            self.settings.praise_key_color = dialog.result_key_color
+            self.settings.key_color = dialog.result_key_color
+            self.subtitle_panel.set_group_size(dialog.result_group_size)
+            self.subtitle_panel.set_style(
+                dialog.result_style,
+                dialog.result_key_color,
+                refresh_preview=not from_instant,
+            )
+        elif style_source == "bible":
+            self.bible_style = dialog.result_style
+            self.settings.bible_style = dialog.result_style.to_dict()
+            self.settings.bible_key_color = dialog.result_key_color
+            self.settings.bible_group_size = dialog.result_group_size
+            self.bible_panel.set_group_size(
+                dialog.result_group_size,
+                refresh_preview=not from_instant,
+            )
+            self.bible_panel.set_style(
+                dialog.result_style,
+                dialog.result_key_color,
+                refresh_preview=not from_instant,
+            )
+        else:
+            self.bible_reference_style = dialog.result_style
+            self.settings.bible_reference_style = dialog.result_style.to_dict()
+            self.settings.bible_key_color = dialog.result_key_color
+            self.bible_panel.set_reference_style(
+                dialog.result_style,
+                dialog.result_key_color,
+                refresh_preview=not from_instant,
+            )
+        if style_source == "instant_text":
+            self.instant_panel.set_style(dialog.result_style, dialog.result_key_color)
+        if from_instant and self.state.broadcast.preview_content.subtitle_source == "instant_text":
+            self.instant_panel.preview_current()
         self.settings.current_style_preset = dialog.result_preset
-        self.subtitle_panel.set_group_size(dialog.result_group_size)
-        self.subtitle_panel.set_style(dialog.result_style, dialog.result_key_color)
         self.status.setText(
             "자막 스타일을 송출 Preview에 적용했습니다. Live는 변경되지 않았습니다."
         )
+
+    def _mark_subtitle_live(self, content: Content) -> None:
+        if content.subtitle_source == "bible":
+            self.bible_panel.mark_live()
+        elif content.subtitle_source.startswith("instant"):
+            self.instant_panel.mark_live(content.subtitle_source)
+        else:
+            self.subtitle_panel.mark_live()
+
+    def _bible_file_changed(self, path: str) -> None:
+        self.settings.bible_file = path
+        self.bible_path = Path(path)
+        self.bible_repository = self.bible_panel.repository
+
+    def _bible_plan_file_changed(self, path: str) -> None:
+        self.settings.last_bible_plan_file = path
 
     def open_screen_settings(self) -> None:
         outputs_active = any(
@@ -1809,9 +2039,7 @@ class ControllerWindow(QMainWindow):
                 )
             else:
                 window = (
-                    self.broadcast_output
-                    if role is ChannelRole.BROADCAST
-                    else self.venue_output
+                    self.broadcast_output if role is ChannelRole.BROADCAST else self.venue_output
                 )
             return window is not None and window.isVisible()
 
@@ -1912,11 +2140,15 @@ class ControllerWindow(QMainWindow):
         self.status.setText(message + " 해당 채널을 BLACK으로 전환했습니다.")
         QMessageBox.warning(self, "화면 연결 해제", self.status.text())
 
-    def _subtitle_document_changed(self, document: SubtitleDocument) -> None:
-        self.settings.subtitle_group_size = document.group_size
-        if document.path:
-            self.settings.last_subtitle_file = str(document.path)
-            self.settings.subtitle_folder = str(document.path.parent)
+    def _praise_settings_changed(
+        self,
+        group_size: int,
+        plan_path: str,
+        song_folder: str,
+    ) -> None:
+        self.settings.subtitle_group_size = group_size
+        self.settings.last_praise_plan_file = plan_path
+        self.settings.song_folder = song_folder
 
     def _pdf_folder_changed(self, folder: str) -> None:
         self.settings.pdf_folder = folder
@@ -1932,7 +2164,7 @@ class ControllerWindow(QMainWindow):
         self.settings.audio_folder = folder
 
     def _video_selection_changed(self, path: str) -> None:
-        self.settings.last_video_file = path
+        self.settings.last_video_file = "" if path.startswith(("http://", "https://")) else path
 
     def _media_settings_changed(self) -> None:
         self.settings.video_sort_field = self.video_panel.sort_field
@@ -1957,8 +2189,7 @@ class ControllerWindow(QMainWindow):
         content = self.state.channel(role).preview_content
         if (
             content.kind is not ContentType.VIDEO
-            or content.video_path is None
-            or content.video_path.expanduser().resolve() != Path(path).expanduser().resolve()
+            or content.video_source_key != path
         ):
             return
         if not image.isNull():
@@ -2042,6 +2273,10 @@ class ControllerWindow(QMainWindow):
             return None
         if self._is_within(focus, self.sync_bar):
             return "linked"
+        if self._is_within(focus, self.instant_panel):
+            return "instant"
+        if self._is_within(focus, self.bible_panel):
+            return "bible"
         if self._is_within(focus, self.subtitle_panel):
             return "subtitle"
         if self._is_within(focus, self.pdf_panel):
@@ -2052,6 +2287,10 @@ class ControllerWindow(QMainWindow):
             return "audio"
         if self._is_within(focus, self.tabs) or focus is self:
             panel = self.tabs.currentWidget()
+            if panel is self.instant_panel:
+                return "instant"
+            if panel is self.bible_panel:
+                return "bible"
             if panel is self.subtitle_panel:
                 return "subtitle"
             if panel is self.pdf_panel:
@@ -2063,15 +2302,6 @@ class ControllerWindow(QMainWindow):
         return None
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if (
-            watched is self.subtitle_panel.line_edit
-            and event.type() is QEvent.Type.KeyPress
-            and isinstance(event, QKeyEvent)
-            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-        ):
-            self.subtitle_panel.line_edit.returnPressed.emit()
-            event.accept()
-            return True
         if (
             event.type() is QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)
@@ -2090,7 +2320,10 @@ class ControllerWindow(QMainWindow):
         event_target: QWidget | None = None,
     ) -> bool:
         focus = event_target or self.application.focusWidget()
-        if isinstance(focus, (QLineEdit, QAbstractSpinBox, QComboBox, QSlider)):
+        if isinstance(
+            focus,
+            (QLineEdit, QPlainTextEdit, QAbstractSpinBox, QComboBox, QSlider),
+        ):
             return False
         area = self._keyboard_area(focus)
         if area is None:
@@ -2120,7 +2353,31 @@ class ControllerWindow(QMainWindow):
             elif key == Qt.Key.Key_Home:
                 self.subtitle_panel.navigate(0)
             elif key == Qt.Key.Key_End:
-                self.subtitle_panel.navigate(len(self.subtitle_panel.document.cards) - 1)
+                self.subtitle_panel.navigate(self.subtitle_panel.output_count - 1)
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.take(ChannelRole.BROADCAST)
+            else:
+                return False
+            return True
+        if area == "bible":
+            if key == Qt.Key.Key_Left:
+                self.bible_panel.move_preview(-1)
+            elif key == Qt.Key.Key_Right:
+                self.bible_panel.move_preview(1)
+            elif key == Qt.Key.Key_Home:
+                self.bible_panel.navigate(0)
+            elif key == Qt.Key.Key_End:
+                self.bible_panel.navigate(self.bible_panel.output_count - 1)
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.take(ChannelRole.BROADCAST)
+            else:
+                return False
+            return True
+        if area == "instant":
+            if key == Qt.Key.Key_Left:
+                self.instant_panel.move_preview(-1)
+            elif key == Qt.Key.Key_Right:
+                self.instant_panel.move_preview(1)
             elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self.take(ChannelRole.BROADCAST)
             else:
@@ -2200,7 +2457,13 @@ class ControllerWindow(QMainWindow):
             if current_audio is not None and current_audio.path is not None
             else ""
         )
-        self.settings.panel_layout = f"tabs:{self.tabs.currentIndex()}"
+        current_panel = self.tabs.currentWidget()
+        object_name = current_panel.objectName() if current_panel is not None else ""
+        self.settings.panel_layout = (
+            f"tab:{object_name.removeprefix('ContentSource_')}"
+            if object_name.startswith("ContentSource_")
+            else f"tabs:{self.tabs.currentIndex()}"
+        )
         splitter_data = self.workspace_splitter.saveState().toBase64().data()
         self.settings.workspace_splitter_state = bytes(splitter_data).decode("ascii")
         geometry_data = self.saveGeometry().toBase64().data()

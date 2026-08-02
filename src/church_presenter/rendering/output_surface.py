@@ -94,7 +94,7 @@ class OutputSurface(QWidget):
         self.pdf_image = QImage()
         if (
             content.kind is not ContentType.VIDEO
-            or str(content.video_path or "") != self._video_frame_path
+            or content.video_source_key != self._video_frame_path
         ):
             self.video_frame = QImage()
             self.video_native_frame = QVideoFrame()
@@ -107,8 +107,8 @@ class OutputSurface(QWidget):
 
     def set_video_frame(self, path: str, frame: object) -> None:
         """Update a real decoded frame for current or pending video content."""
-        current_path = str(self.content.video_path or "")
-        pending_path = str(self._pending_content.video_path or "") if self._pending_content else ""
+        current_path = self.content.video_source_key
+        pending_path = self._pending_content.video_source_key if self._pending_content else ""
         if path not in (current_path, pending_path):
             return
         self._video_frame_path = path
@@ -210,7 +210,7 @@ class OutputSurface(QWidget):
         show_native = (
             self._native_video_allowed
             and self.content.kind is ContentType.VIDEO
-            and str(self.content.video_path or "") == self._video_frame_path
+            and self.content.video_source_key == self._video_frame_path
             and self.video_native_frame.isValid()
         )
         self.video_widget.setVisible(show_native)

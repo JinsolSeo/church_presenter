@@ -5,132 +5,166 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
-from church_presenter.domain.models import Content, SubtitleDocument, SubtitleStyle
-from church_presenter.services.subtitle_service import load_subtitle, save_subtitle
-from church_presenter.ui.dialogs.subtitle_merge_dialog import SubtitleMergeDialog
+from church_presenter.domain.models import Content, SubtitleStyle
+from church_presenter.domain.song import SongCue, SongDocument, SongPlanEntry, SongSectionType
+from church_presenter.services.song_service import (
+    load_song,
+    load_song_plan,
+    save_song_plan,
+)
+from church_presenter.ui.dialogs.song_json_dialog import SongJsonDialog
 
 
 class SubtitlePanel(QWidget):
-    """Grouped-card navigation with source-line editing."""
+    """Build and navigate a weekly praise plan from sectioned song JSON files."""
 
     preview_requested = Signal(object)
     take_requested = Signal()
     style_requested = Signal()
-    document_changed = Signal(object)
+    status_changed = Signal(str)
+    settings_changed = Signal(int, str, str)
 
     def __init__(
         self,
         style: SubtitleStyle,
         key_color: str,
         group_size: int = 2,
+        song_folder: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.document = SubtitleDocument(group_size=group_size)
         self.subtitle_style = style
         self.key_color = key_color
+        self.group_size = max(1, group_size)
+        self.song_folder = song_folder
+        self.plan_path: Path | None = None
+        self.library: dict[Path, SongDocument] = {}
+        self.entries: list[SongPlanEntry] = []
+        self._flat: list[SongCue] = []
         self.preview_index = -1
         self.live_index = -1
-        self._selected_source_index = -1
+        self.is_modified = False
         self._card_live_background = QColor(Qt.GlobalColor.red)
         self._card_preview_background = QColor(Qt.GlobalColor.darkCyan)
         self._card_text = QColor(Qt.GlobalColor.black)
         self._card_active_text = QColor(Qt.GlobalColor.white)
-        layout = QVBoxLayout(self)
-        toolbar = QHBoxLayout()
-        self.file_label = QLabel("자막 파일 없음")
-        self.file_label.setMinimumWidth(1)
-        self.file_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Preferred,
-        )
-        self.open_button = QPushButton("TXT 열기")
-        self.open_button.setProperty("variant", "primary")
-        self.save_button = QPushButton("저장")
-        save_as_button = QPushButton("다른 이름으로 저장")
-        self.reload_button = QPushButton("다시 불러오기")
-        style_button = QPushButton("자막 스타일 설정")
-        self.merge_button = QPushButton("자막 합치기")
-        for widget in (
-            self.file_label,
-            self.open_button,
-            self.save_button,
-            save_as_button,
-            self.reload_button,
-            style_button,
-            self.merge_button,
-        ):
-            toolbar.addWidget(widget)
-        toolbar.setStretch(0, 1)
-        toolbar.addStretch()
-        layout.addLayout(toolbar)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("출력 카드 (파생 데이터)"))
-        self.card_list = QListWidget()
-        self.card_list.setObjectName("SubtitleCardList")
-        self.card_list.setAlternatingRowColors(True)
-        left_layout.addWidget(self.card_list)
-        splitter.addWidget(left)
+        layout = QHBoxLayout(self)
+        controls_host = QWidget()
+        controls_host.setMinimumWidth(350)
+        controls_host.setMaximumWidth(470)
+        controls = QVBoxLayout(controls_host)
+        controls.setContentsMargins(0, 0, 0, 0)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.addWidget(QLabel("원본 한 줄 편집 (source of truth)"))
-        self.line_list = QListWidget()
-        right_layout.addWidget(self.line_list)
-        self.line_edit = QLineEdit()
-        self.line_edit.setPlaceholderText("선택한 원본 줄을 편집하고 Enter")
-        right_layout.addWidget(self.line_edit)
-        actions = QHBoxLayout()
-        actions.setSpacing(6)
-        self.add_line_button = QPushButton("줄 추가")
-        self.delete_line_button = QPushButton("줄 삭제")
-        self.delete_line_button.setProperty("variant", "danger")
-        self.move_up_button = QPushButton("위로")
-        self.move_down_button = QPushButton("아래로")
-        for button in (
-            self.add_line_button,
-            self.delete_line_button,
-            self.move_up_button,
-            self.move_down_button,
-        ):
-            button.setMaximumWidth(110)
-            actions.addWidget(button)
-        right_layout.addLayout(actions)
-        splitter.addWidget(right)
-        splitter.setSizes([520, 460])
-        layout.addWidget(splitter)
+        file_row = QHBoxLayout()
+        self.open_song_button = QPushButton("곡 JSON")
+        self.open_song_button.setProperty("variant", "primary")
+        self.open_plan_button = QPushButton("콘티 열기")
+        self.save_plan_button = QPushButton("콘티 저장")
+        self.create_song_button = QPushButton("곡 만들기")
+        self.style_button = QPushButton("Style")
+        file_row.addWidget(self.open_song_button)
+        file_row.addWidget(self.open_plan_button)
+        file_row.addWidget(self.save_plan_button)
+        file_row.addWidget(self.create_song_button)
+        file_row.addWidget(self.style_button)
+        controls.addLayout(file_row)
 
-        self.open_button.clicked.connect(self.open_file)
-        self.save_button.clicked.connect(self.save)
-        save_as_button.clicked.connect(self.save_as)
-        self.reload_button.clicked.connect(self.reload)
-        style_button.clicked.connect(self.style_requested)
-        self.merge_button.clicked.connect(self.open_merge_dialog)
-        self.card_list.currentRowChanged.connect(self._card_selected)
-        self.line_list.currentRowChanged.connect(self._source_selected)
-        self.line_edit.returnPressed.connect(self._commit_line_edit)
-        self.add_line_button.clicked.connect(self._add_line)
-        self.delete_line_button.clicked.connect(self._delete_line)
-        self.move_up_button.clicked.connect(lambda: self._move_line(-1))
-        self.move_down_button.clicked.connect(lambda: self._move_line(1))
-        self._refresh()
+        song_row = QHBoxLayout()
+        song_row.addWidget(QLabel("곡 선택"))
+        self.song_combo = QComboBox()
+        self.song_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.song_combo.setMinimumContentsLength(18)
+        self.song_combo.setPlaceholderText("곡 JSON을 선택하세요")
+        song_row.addWidget(self.song_combo, 1)
+        controls.addLayout(song_row)
+
+        selection_row = QHBoxLayout()
+        self.section_list = QListWidget()
+        self.section_list.setMinimumHeight(72)
+        self.section_list.setToolTip("추가할 Verse, Chorus, Bridge를 선택하세요")
+        selection_row.addWidget(self.section_list, 1)
+
+        action_host = QWidget()
+        action_host.setMinimumWidth(76)
+        action_host.setMaximumWidth(92)
+        actions = QVBoxLayout(action_host)
+        actions.setContentsMargins(0, 0, 0, 0)
+        self.add_button = QPushButton("추가")
+        self.add_button.setProperty("variant", "primary")
+        self.remove_button = QPushButton("삭제")
+        self.move_up_button = QPushButton("▲")
+        self.move_down_button = QPushButton("▼")
+        actions.addWidget(self.add_button)
+        actions.addWidget(self.remove_button)
+        move_row = QHBoxLayout()
+        move_row.setContentsMargins(0, 0, 0, 0)
+        move_row.addWidget(self.move_up_button)
+        move_row.addWidget(self.move_down_button)
+        actions.addLayout(move_row)
+        actions.addStretch()
+        selection_row.addWidget(action_host)
+        controls.addLayout(selection_row, 1)
+
+        navigation_row = QHBoxLayout()
+        self.previous_button = QPushButton("◀ 이전")
+        self.next_button = QPushButton("다음 ▶")
+        self.take_button = QPushButton("TAKE")
+        self.take_button.setProperty("variant", "take")
+        navigation_row.addWidget(self.previous_button)
+        navigation_row.addWidget(self.next_button)
+        navigation_row.addWidget(self.take_button)
+        controls.addLayout(navigation_row)
+
+        plan_host = QWidget()
+        plan_layout = QVBoxLayout(plan_host)
+        plan_layout.setContentsMargins(0, 0, 0, 0)
+        plan_layout.addWidget(QLabel("이번 주 찬양 콘티 · 카드 선택 → Preview"))
+        self.plan_list = QListWidget()
+        self.plan_list.setObjectName("SubtitleCardList")
+        self.plan_list.setAlternatingRowColors(True)
+        self.plan_list.setWordWrap(True)
+        self.plan_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.plan_list.setUniformItemSizes(False)
+        self.plan_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        plan_layout.addWidget(self.plan_list, 1)
+        self.card_list = self.plan_list
+
+        layout.addWidget(controls_host, 3)
+        layout.addWidget(plan_host, 5)
+
+        self.open_song_button.clicked.connect(self.open_song_files)
+        self.open_plan_button.clicked.connect(self.open_plan)
+        self.save_plan_button.clicked.connect(self.save_plan)
+        self.create_song_button.clicked.connect(self.create_song_file)
+        self.song_combo.currentIndexChanged.connect(self._song_changed)
+        self.add_button.clicked.connect(self.add_selected_sections)
+        self.remove_button.clicked.connect(self.remove_selected_entry)
+        self.move_up_button.clicked.connect(lambda: self.move_selected_entry(-1))
+        self.move_down_button.clicked.connect(lambda: self.move_selected_entry(1))
+        self.style_button.clicked.connect(self.style_requested)
+        self.previous_button.clicked.connect(lambda: self.move_preview(-1))
+        self.next_button.clicked.connect(lambda: self.move_preview(1))
+        self.take_button.clicked.connect(self.take_requested)
+        self.plan_list.currentRowChanged.connect(self._row_selected)
+        self._refresh_labels()
+
+    @property
+    def output_count(self) -> int:
+        return len(self._flat)
 
     def set_card_theme(
         self,
@@ -140,274 +174,344 @@ class SubtitlePanel(QWidget):
         text: str,
         active_text: str,
     ) -> None:
-        """Apply semantic theme colors to subtitle navigation cards."""
         self._card_live_background = QColor(live_background)
         self._card_preview_background = QColor(preview_background)
         self._card_text = QColor(text)
         self._card_active_text = QColor(active_text)
         self._refresh_labels()
 
-    def set_style(self, style: SubtitleStyle, key_color: str) -> None:
+    def set_style(
+        self,
+        style: SubtitleStyle,
+        key_color: str,
+        *,
+        refresh_preview: bool = True,
+    ) -> None:
         self.subtitle_style = style
         self.key_color = key_color
-        if self.preview_index >= 0:
+        if refresh_preview:
             self._emit_preview()
 
-    def load_path(self, path: Path, *, warn: bool = True) -> bool:
-        if warn and not self.confirm_discard_changes():
-            return False
-        source = path.expanduser().resolve()
-        try:
-            document = load_subtitle(source, self.document.group_size)
-        except (OSError, UnicodeError) as error:
-            QMessageBox.critical(self, "자막 파일 오류", str(error))
-            return False
-        self.document = document
-        self.file_label.setText(str(source))
-        self.file_label.setToolTip(str(source))
-        self.preview_index = 0 if document.cards else -1
-        self.live_index = -1
-        self._refresh()
-        if self.preview_index >= 0:
-            self._emit_preview()
-        self.document_changed.emit(self.document)
-        return True
+    def set_group_size(self, value: int) -> None:
+        if value < 1:
+            raise ValueError("song group size must be at least one")
+        if value != self.group_size:
+            self.group_size = value
+            self.live_index = -1
+            self._rebuild()
+            self._emit_settings_changed()
 
-    def open_file(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
+    def open_song_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
             self,
-            "자막 파일 선택",
-            str(self.document.path.parent if self.document.path else Path.home()),
-            "Text files (*.txt)",
+            "곡 JSON 선택",
+            str(self.song_folder or Path.home()),
+            "Song JSON (*.json)",
         )
         if selected:
-            self.load_path(Path(selected))
+            self.load_song_paths([Path(path) for path in selected])
 
-    def open_merge_dialog(self) -> None:
-        initial_folder = self.document.path.parent if self.document.path else None
-        dialog = SubtitleMergeDialog(
-            initial_folder,
-            self.document.group_size,
-            self,
-        )
-        dialog.exec()
+    def create_song_file(self) -> None:
+        dialog = SongJsonDialog(self.song_folder or Path.home(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            self.load_song_paths([dialog.saved_path])
 
-    def save(self) -> bool:
-        if self.document.path is None:
-            return self.save_as()
+    def load_song_paths(self, paths: list[Path]) -> bool:
         try:
-            save_subtitle(self.document)
-        except OSError as error:
-            QMessageBox.critical(self, "저장 실패", str(error))
+            loaded = [
+                (path.expanduser().resolve(), load_song(path.expanduser().resolve()))
+                for path in paths
+            ]
+            loaded_paths = {loaded_path for loaded_path, _song in loaded}
+            known_ids = {
+                song.id: path
+                for path, song in self.library.items()
+                if path not in loaded_paths
+            }
+            for path, song in loaded:
+                if song.id in known_ids and known_ids[song.id] != path:
+                    raise ValueError(
+                        f"같은 곡 ID를 사용하는 다른 파일이 있습니다: {song.id}"
+                    )
+                known_ids[song.id] = path
+        except (OSError, UnicodeError, KeyError, TypeError, ValueError) as error:
+            QMessageBox.critical(self, "곡 JSON 오류", str(error))
             return False
-        self._refresh_labels()
-        self.document_changed.emit(self.document)
+        if not loaded:
+            return False
+        for path, song in loaded:
+            self.library[path] = song
+        self.song_folder = loaded[-1][0].parent
+        self._refresh_song_combo(selected_path=loaded[-1][0])
+        self._emit_settings_changed()
+        self.status_changed.emit(f"곡 JSON {len(loaded)}개를 불러왔습니다.")
         return True
 
-    def save_as(self) -> bool:
-        selected, _ = QFileDialog.getSaveFileName(
-            self,
-            "자막 다른 이름으로 저장",
-            str(self.document.path or Path.home() / "subtitles.txt"),
-            "Text files (*.txt)",
+    def _refresh_song_combo(self, selected_path: Path | None = None) -> None:
+        current = selected_path or self._current_song_path()
+        self.song_combo.blockSignals(True)
+        self.song_combo.clear()
+        for path, song in self.library.items():
+            self.song_combo.addItem(song.title, str(path))
+        if current is not None:
+            target = self.song_combo.findData(str(current))
+            if target >= 0:
+                self.song_combo.setCurrentIndex(target)
+        self.song_combo.blockSignals(False)
+        self._song_changed()
+
+    def _current_song_path(self) -> Path | None:
+        value = self.song_combo.currentData()
+        return Path(str(value)) if isinstance(value, str) and value else None
+
+    def _current_song(self) -> tuple[Path, SongDocument] | None:
+        path = self._current_song_path()
+        if path is None:
+            return None
+        song = self.library.get(path)
+        return (path, song) if song is not None else None
+
+    def _song_changed(self) -> None:
+        self.section_list.clear()
+        current = self._current_song()
+        if current is None:
+            self.song_combo.setToolTip("곡 JSON을 선택하세요")
+            return
+        path, song = current
+        self.song_combo.setToolTip(f"{path}\n불러온 곡 {len(self.library)}개")
+        chorus_found = False
+        for section in song.sections:
+            item = QListWidgetItem(
+                f"{section.label} · {section.type.display_name} · {len(section.lines)}줄"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, section.id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            checked = section.type is SongSectionType.CHORUS
+            chorus_found = chorus_found or checked
+            item.setCheckState(
+                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            )
+            self.section_list.addItem(item)
+        if not chorus_found and self.section_list.count():
+            self.section_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+    def add_selected_sections(self) -> None:
+        current = self._current_song()
+        if current is None:
+            self.status_changed.emit("곡 JSON을 먼저 선택하십시오.")
+            return
+        path, song = current
+        sequence = tuple(
+            str(self.section_list.item(row).data(Qt.ItemDataRole.UserRole))
+            for row in range(self.section_list.count())
+            if self.section_list.item(row).checkState() is Qt.CheckState.Checked
         )
-        if not selected:
-            return False
-        try:
-            path = save_subtitle(self.document, Path(selected))
-        except OSError as error:
-            QMessageBox.critical(self, "저장 실패", str(error))
-            return False
-        self.file_label.setText(str(path))
-        self.file_label.setToolTip(str(path))
+        if not sequence:
+            self.status_changed.emit("추가할 Verse, Chorus 또는 Bridge를 선택하십시오.")
+            return
+        if set(sequence) == {section.id for section in song.sections}:
+            sequence = song.default_sequence
+        self._add_entry(SongPlanEntry.create(path, song, sequence))
+
+    def _add_entry(self, entry: SongPlanEntry) -> None:
+        self.entries.append(entry)
+        self.is_modified = True
+        self._rebuild(refresh_preview=False)
+        self._select_entry(len(self.entries) - 1)
+        self._emit_preview()
+        self.status_changed.emit(f"찬양 콘티에 {entry.song.title}을(를) 추가했습니다.")
+
+    def remove_selected_entry(self) -> None:
+        entry_index = self._selected_entry_index()
+        if entry_index is None:
+            return
+        removed = self.entries.pop(entry_index)
+        self.is_modified = True
+        self._rebuild()
+        self.status_changed.emit(f"찬양 콘티에서 {removed.song.title}을(를) 삭제했습니다.")
+
+    def move_selected_entry(self, offset: int) -> None:
+        entry_index = self._selected_entry_index()
+        if entry_index is None:
+            return
+        destination = entry_index + offset
+        if not 0 <= destination < len(self.entries):
+            return
+        self.entries[entry_index], self.entries[destination] = (
+            self.entries[destination],
+            self.entries[entry_index],
+        )
+        self.is_modified = True
+        self._rebuild(refresh_preview=False)
+        self._select_entry(destination)
+        self._emit_preview()
+
+    def _selected_entry_index(self) -> int | None:
+        item = self.plan_list.currentItem()
+        data = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if isinstance(data, tuple) and len(data) >= 3 and data[0] == "cue":
+            return int(data[2])
+        return None
+
+    def _rebuild(self, *, refresh_preview: bool = True) -> None:
+        selected_reference = (
+            self._flat[self.preview_index].reference
+            if 0 <= self.preview_index < len(self._flat)
+            else ""
+        )
+        self.plan_list.blockSignals(True)
+        self.plan_list.clear()
+        self._flat.clear()
+        for entry_index, entry in enumerate(self.entries):
+            sequence_labels = " → ".join(
+                entry.song.section(section_id).label for section_id in entry.sequence
+            )
+            header = QListWidgetItem(f"{entry.song.title} · {sequence_labels}")
+            header.setData(Qt.ItemDataRole.UserRole, ("entry", entry_index))
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.plan_list.addItem(header)
+            for occurrence, section_id in enumerate(entry.sequence):
+                section = entry.song.section(section_id)
+                for line_start in range(0, len(section.lines), self.group_size):
+                    lines = section.lines[line_start : line_start + self.group_size]
+                    cue = SongCue(
+                        entry.entry_id,
+                        occurrence,
+                        section.id,
+                        line_start,
+                        line_start + len(lines),
+                        "\n".join(lines),
+                    )
+                    flat_index = len(self._flat)
+                    self._flat.append(cue)
+                    text = " / ".join(lines)
+                    item = QListWidgetItem(f"  {section.label} · {text}")
+                    item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        ("cue", flat_index, entry_index),
+                    )
+                    self.plan_list.addItem(item)
+        self.preview_index = -1
+        if selected_reference:
+            self.preview_index = self._index_for_reference(selected_reference)
+        if self.preview_index < 0 and self._flat:
+            self.preview_index = 0
+        if self.preview_index >= 0:
+            self._select_flat(self.preview_index)
+        self.plan_list.blockSignals(False)
         self._refresh_labels()
-        self.document_changed.emit(self.document)
-        return True
+        if refresh_preview:
+            self._emit_preview()
 
-    def reload(self) -> bool:
-        if self.document.path is None:
-            return False
-        return self.load_path(self.document.path)
+    def _row_selected(self, row: int) -> None:
+        item = self.plan_list.item(row)
+        data = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if isinstance(data, tuple) and data and data[0] == "cue":
+            self.preview_index = int(data[1])
+            self._refresh_labels()
+            self._emit_preview()
 
-    def confirm_discard_changes(self) -> bool:
-        if not self.document.is_modified:
-            return True
-        answer = QMessageBox.question(
-            self,
-            "저장하지 않은 변경사항",
-            "자막 변경사항을 저장하시겠습니까?",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            return self.save()
-        return answer == QMessageBox.StandardButton.No
+    def _select_flat(self, index: int) -> None:
+        for row in range(self.plan_list.count()):
+            data = self.plan_list.item(row).data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data[:2] == ("cue", index):
+                self.plan_list.setCurrentRow(row)
+                return
+
+    def _select_entry(self, entry_index: int) -> None:
+        for row in range(self.plan_list.count()):
+            data = self.plan_list.item(row).data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data[0] == "cue" and data[2] == entry_index:
+                self.preview_index = int(data[1])
+                self._select_flat(self.preview_index)
+                return
 
     def navigate(self, destination: int) -> None:
-        count = len(self.document.cards)
-        if not count:
+        if not self._flat:
             return
-        self.preview_index = max(0, min(destination, count - 1))
-        self.card_list.setCurrentRow(self.preview_index)
+        self.preview_index = max(0, min(destination, len(self._flat) - 1))
+        self._select_flat(self.preview_index)
+        self._refresh_labels()
         self._emit_preview()
 
     def set_preview_position(self, destination: int) -> None:
-        """Synchronize the card selection without emitting another Preview request."""
-        count = len(self.document.cards)
-        if not 0 <= destination < count:
+        if not 0 <= destination < len(self._flat):
             return
         self.preview_index = destination
-        self.card_list.blockSignals(True)
-        self.card_list.setCurrentRow(destination)
-        self.card_list.blockSignals(False)
-        self._populate_source_group()
+        self.plan_list.blockSignals(True)
+        self._select_flat(destination)
+        self.plan_list.blockSignals(False)
         self._refresh_labels()
 
     def move_preview(self, offset: int) -> None:
         self.navigate(self.preview_index + offset)
 
+    def restore_preview(self) -> None:
+        self._emit_preview()
+
     def mark_live(self) -> None:
         self.live_index = self.preview_index
         self._refresh_labels()
 
-    def set_group_size(self, value: int) -> None:
-        self.document.set_group_size(value)
-        self.live_index = -1
-        count = len(self.document.cards)
-        self.preview_index = min(max(self.preview_index, 0), count - 1) if count else -1
-        self._refresh()
-        if self.preview_index >= 0:
-            self._emit_preview()
-        self.document_changed.emit(self.document)
+    def _content_at(self, index: int) -> Content:
+        cue = self._flat[index]
+        return Content.subtitle(
+            cue.text,
+            index,
+            self.subtitle_style,
+            self.key_color,
+            source="praise",
+            reference=cue.reference,
+        )
 
-    def _card_selected(self, index: int) -> None:
-        if index < 0 or index >= len(self.document.cards):
-            return
+    def _emit_preview(self) -> None:
+        if 0 <= self.preview_index < len(self._flat):
+            self.preview_requested.emit(self._content_at(self.preview_index))
+
+    def _index_for_reference(self, value: str) -> int:
+        entry_id, occurrence, line_index = SongCue.parse_reference(value)
+        return next(
+            (
+                index
+                for index, cue in enumerate(self._flat)
+                if cue.entry_id == entry_id
+                and cue.occurrence == occurrence
+                and cue.line_start <= line_index < cue.line_end
+            ),
+            -1,
+        )
+
+    def content_for_reference(self, value: str) -> Content:
+        index = self._index_for_reference(value)
+        if index < 0:
+            raise KeyError(f"현재 찬양 콘티에 {value}가 없습니다")
         self.preview_index = index
-        self._populate_source_group()
+        self._select_flat(index)
         self._refresh_labels()
-        self._emit_preview()
-
-    def _populate_source_group(self) -> None:
-        self.line_list.clear()
-        if self.preview_index < 0:
-            return
-        start = self.preview_index * self.document.group_size
-        end = min(start + self.document.group_size, len(self.document.lines))
-        for source_index in range(start, end):
-            line = self.document.lines[source_index]
-            label = line if line else "(빈 자막)"
-            item = QListWidgetItem(f"{source_index + 1}. {label}")
-            item.setData(Qt.ItemDataRole.UserRole, source_index)
-            self.line_list.addItem(item)
-
-    def _source_selected(self, row: int) -> None:
-        item = self.line_list.item(row)
-        if item is None:
-            self._selected_source_index = -1
-            self.line_edit.clear()
-            return
-        self._selected_source_index = int(item.data(Qt.ItemDataRole.UserRole))
-        self.line_edit.setText(self.document.lines[self._selected_source_index])
-
-    def _commit_line_edit(self) -> None:
-        if self._selected_source_index < 0:
-            return
-        try:
-            self.document.edit_line(self._selected_source_index, self.line_edit.text())
-        except ValueError as error:
-            QMessageBox.warning(self, "원본 줄", str(error))
-            return
-        self.live_index = -1
-        self._refresh()
-        self.document_changed.emit(self.document)
-
-    def _add_line(self) -> None:
-        index = (
-            self._selected_source_index
-            if self._selected_source_index >= 0
-            else len(self.document.lines)
-        )
-        self.document.add_line("새 자막", index)
-        self.live_index = -1
-        self.preview_index = index // self.document.group_size
-        self._selected_source_index = index
-        self._refresh()
-        self._select_source_index(index)
-        self.line_edit.setFocus()
-        self.line_edit.selectAll()
-        self.document_changed.emit(self.document)
-
-    def _select_source_index(self, source_index: int) -> None:
-        for row in range(self.line_list.count()):
-            item = self.line_list.item(row)
-            if int(item.data(Qt.ItemDataRole.UserRole)) == source_index:
-                self.line_list.setCurrentRow(row)
-                return
-
-    def _delete_line(self) -> None:
-        if self._selected_source_index < 0:
-            return
-        self.document.delete_line(self._selected_source_index)
-        self.live_index = -1
-        count = len(self.document.cards)
-        self.preview_index = min(self.preview_index, count - 1)
-        self._selected_source_index = -1
-        self._refresh()
-        self.document_changed.emit(self.document)
-        if self.preview_index >= 0:
-            self._emit_preview()
-
-    def _move_line(self, offset: int) -> None:
-        if self._selected_source_index < 0:
-            return
-        destination = self.document.move_line(
-            self._selected_source_index,
-            self._selected_source_index + offset,
-        )
-        self.live_index = -1
-        self.preview_index = destination // self.document.group_size
-        self._refresh()
-        self.document_changed.emit(self.document)
-
-    def _refresh(self) -> None:
-        current = self.preview_index
-        self.card_list.blockSignals(True)
-        self.card_list.clear()
-        for index, card in enumerate(self.document.cards):
-            label = self._card_label(card)
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setSizeHint(
-                item.sizeHint().expandedTo(self.card_list.fontMetrics().size(0, label))
-            )
-            self.card_list.addItem(item)
-        self.card_list.setCurrentRow(current)
-        self.card_list.blockSignals(False)
-        self._populate_source_group()
-        self._refresh_labels()
+        return self._content_at(index)
 
     def _refresh_labels(self) -> None:
-        selected_card_live = (
-            self.live_index >= 0 and self.live_index == self.preview_index
-        )
-        if self.card_list.property("selectedCardLive") != selected_card_live:
-            self.card_list.setProperty("selectedCardLive", selected_card_live)
-            style = self.card_list.style()
-            style.unpolish(self.card_list)
-            style.polish(self.card_list)
-        for index in range(self.card_list.count()):
-            item = self.card_list.item(index)
+        selected_card_live = self.live_index >= 0 and self.live_index == self.preview_index
+        if self.plan_list.property("selectedCardLive") != selected_card_live:
+            self.plan_list.setProperty("selectedCardLive", selected_card_live)
+            style = self.plan_list.style()
+            style.unpolish(self.plan_list)
+            style.polish(self.plan_list)
+        for row in range(self.plan_list.count()):
+            item = self.plan_list.item(row)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(data, tuple) or not data or data[0] != "cue":
+                continue
+            index = int(data[1])
+            cue = self._flat[index]
+            section = self.entries[int(data[2])].song.section(cue.section_id)
             labels: list[str] = []
             if index == self.live_index:
                 labels.append("LIVE")
             if index == self.preview_index:
                 labels.append("PREVIEW")
-            card = self.document.cards[index]
-            prefix = f"[{' + '.join(labels)}]  " if labels else ""
-            item.setText(prefix + self._card_label(card))
+            prefix = f"[{' + '.join(labels)}]  " if labels else "  "
+            item.setText(prefix + f"{section.label} · {' / '.join(cue.text.splitlines())}")
             if index == self.live_index:
                 item.setBackground(self._card_live_background)
                 item.setForeground(self._card_active_text)
@@ -417,24 +521,82 @@ class SubtitlePanel(QWidget):
             else:
                 item.setBackground(Qt.GlobalColor.transparent)
                 item.setForeground(self._card_text)
-        modified = " ● 수정됨" if self.document.is_modified else ""
-        source = str(self.document.path) if self.document.path else "자막 파일 없음"
-        self.file_label.setText(source + modified)
-        self.save_button.setEnabled(bool(self.document.lines))
 
-    @staticmethod
-    def _card_label(card: str) -> str:
-        return card if card.strip() else "(빈 자막)"
-
-    def _emit_preview(self) -> None:
-        cards = self.document.cards
-        if not 0 <= self.preview_index < len(cards):
-            return
-        self.preview_requested.emit(
-            Content.subtitle(
-                cards[self.preview_index],
-                self.preview_index,
-                self.subtitle_style,
-                self.key_color,
+    def save_plan(self) -> bool:
+        if self.plan_path is None:
+            selected, _ = QFileDialog.getSaveFileName(
+                self,
+                "찬양 콘티 저장",
+                str((self.song_folder or Path.home()) / "이번주_찬양_콘티.json"),
+                "JSON (*.json)",
             )
+            if not selected:
+                return False
+            path = Path(selected)
+        else:
+            path = self.plan_path
+        try:
+            self.plan_path = save_song_plan(path, self.entries)
+        except OSError as error:
+            QMessageBox.critical(self, "찬양 콘티 저장 실패", str(error))
+            return False
+        self.is_modified = False
+        self._emit_settings_changed()
+        self.status_changed.emit(f"찬양 콘티 저장 완료: {self.plan_path.name}")
+        return True
+
+    def open_plan(self) -> bool:
+        if not self.confirm_discard_changes():
+            return False
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "찬양 콘티 열기",
+            str(self.plan_path or self.song_folder or Path.home()),
+            "JSON (*.json)",
+        )
+        return bool(selected) and self.load_plan_path(Path(selected), warn=False)
+
+    def load_plan_path(self, path: Path, *, warn: bool = True) -> bool:
+        if warn and not self.confirm_discard_changes():
+            return False
+        source = path.expanduser().resolve()
+        try:
+            entries = load_song_plan(source)
+        except (OSError, UnicodeError, KeyError, TypeError, ValueError) as error:
+            QMessageBox.critical(self, "찬양 콘티 오류", str(error))
+            return False
+        self.entries = entries
+        for entry in entries:
+            self.library[entry.song_path] = entry.song
+        self.plan_path = source
+        self.song_folder = entries[0].song_path.parent if entries else source.parent
+        self.is_modified = False
+        self.live_index = -1
+        self._refresh_song_combo()
+        self._rebuild()
+        self._emit_settings_changed()
+        self.status_changed.emit(f"찬양 콘티를 불러왔습니다: {source.name}")
+        return True
+
+    def confirm_discard_changes(self) -> bool:
+        if not self.is_modified:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "저장하지 않은 찬양 콘티",
+            "찬양 콘티 변경사항을 저장하시겠습니까?",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            return self.save_plan()
+        return answer == QMessageBox.StandardButton.No
+
+    def _emit_settings_changed(self) -> None:
+        self.settings_changed.emit(
+            self.group_size,
+            str(self.plan_path or ""),
+            str(self.song_folder or ""),
         )

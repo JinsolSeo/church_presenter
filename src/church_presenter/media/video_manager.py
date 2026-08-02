@@ -11,10 +11,11 @@ from PySide6.QtMultimedia import QVideoFrame
 
 from church_presenter.domain.enums import ChannelRole, PlaybackStatus
 from church_presenter.domain.models import VideoPlaybackRuntimeState
-from church_presenter.media.base import MediaPlaybackBackend
+from church_presenter.media.base import MediaPlaybackBackend, MediaSource
 
 BackendFactory = Callable[[], MediaPlaybackBackend]
 CUE_TIMEOUT_MS = 10_000
+NETWORK_CUE_TIMEOUT_MS = 30_000
 LOGGER = logging.getLogger(__name__)
 
 
@@ -63,9 +64,9 @@ class VideoPlaybackManager(QObject):
             players.live_backend.set_volume(volume)
             players.live_backend.set_muted(muted)
 
-    def cue_preview(self, role: ChannelRole, path: Path) -> None:
+    def cue_preview(self, role: ChannelRole, path: MediaSource) -> None:
         players = self._channels[role]
-        resolved = path.expanduser().resolve()
+        resolved = self._normalize_source(path)
         players.generation += 1
         generation = players.generation
         players.preview_ready = False
@@ -78,15 +79,16 @@ class VideoPlaybackManager(QObject):
         )
         players.preview_backend.set_muted(True)
         players.preview_backend.load(resolved)
-        QTimer.singleShot(CUE_TIMEOUT_MS, lambda: self._cue_timeout(role, generation))
+        timeout = NETWORK_CUE_TIMEOUT_MS if isinstance(resolved, str) else CUE_TIMEOUT_MS
+        QTimer.singleShot(timeout, lambda: self._cue_timeout(role, generation))
 
-    def cue_both(self, path: Path) -> None:
+    def cue_both(self, path: MediaSource) -> None:
         self.cue_preview(ChannelRole.BROADCAST, path)
         self.cue_preview(ChannelRole.VENUE, path)
 
-    def activate_preview(self, role: ChannelRole, path: Path) -> bool:
+    def activate_preview(self, role: ChannelRole, path: MediaSource) -> bool:
         players = self._channels[role]
-        resolved = path.expanduser().resolve()
+        resolved = self._normalize_source(path)
         if (
             players.preview_ready
             and players.preview_state.status is PlaybackStatus.CUE
@@ -135,10 +137,10 @@ class VideoPlaybackManager(QObject):
             }
         )
 
-    def can_activate(self, role: ChannelRole, path: Path) -> bool:
+    def can_activate(self, role: ChannelRole, path: MediaSource) -> bool:
         """Return whether a prepared first frame can be committed without loading."""
         players = self._channels[role]
-        resolved = path.expanduser().resolve()
+        resolved = self._normalize_source(path)
         return (
             players.preview_ready
             and players.preview_state.status is PlaybackStatus.CUE
@@ -250,7 +252,7 @@ class VideoPlaybackManager(QObject):
         self._set_active(role, False)
         self.runtime_changed.emit(role, players.live_state)
 
-    def last_live_frame(self, role: ChannelRole) -> tuple[Path | None, object]:
+    def last_live_frame(self, role: ChannelRole) -> tuple[MediaSource | None, object]:
         players = self._channels[role]
         if players.live_native_frame.isValid():
             return players.live_state.path, QVideoFrame(players.live_native_frame)
@@ -448,10 +450,16 @@ class VideoPlaybackManager(QObject):
         players.preview_frame = QImage()
         players.preview_backend.stop()
         players.preview_state.status = PlaybackStatus.ERROR
-        players.preview_state.error_message = (
-            "첫 영상 프레임을 10초 안에 준비하지 못했습니다. "
-            "다시 Cue하거나 권장 MP4(H.264/AAC)로 변환해 보십시오."
-        )
+        if isinstance(players.preview_state.path, str):
+            players.preview_state.error_message = (
+                "YouTube 영상을 30초 안에 준비하지 못했습니다. "
+                "네트워크와 영상 공개 상태를 확인한 뒤 다시 Cue하십시오."
+            )
+        else:
+            players.preview_state.error_message = (
+                "첫 영상 프레임을 10초 안에 준비하지 못했습니다. "
+                "다시 Cue하거나 권장 MP4(H.264/AAC)로 변환해 보십시오."
+            )
         self.preview_result.emit(role, path, QImage(), players.preview_state.error_message)
 
     def _set_active(self, role: ChannelRole, active: bool) -> None:
@@ -462,6 +470,10 @@ class VideoPlaybackManager(QObject):
             self._active_roles.discard(role)
         if len(self._active_roles) != before:
             self.active_count_changed.emit(len(self._active_roles))
+
+    @staticmethod
+    def _normalize_source(source: MediaSource) -> MediaSource:
+        return source.expanduser().resolve() if isinstance(source, Path) else source.strip()
 
     def _transport_roles(self, role: ChannelRole) -> tuple[ChannelRole, ...]:
         if role in self._linked_transport_roles:

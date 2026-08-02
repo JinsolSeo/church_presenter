@@ -170,6 +170,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Copyrighted Bible text is a local runtime asset, not repository content.
+src/church_presenter/assets/bibles/*.json
+
 # PyPI configuration file
 .pypirc
 

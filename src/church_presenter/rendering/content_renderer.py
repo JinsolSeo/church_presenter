@@ -25,12 +25,22 @@ class ContentRenderer:
     ) -> None:
         if content.kind is ContentType.SUBTITLE_KEY:
             painter.fillRect(bounds, content.key_color)
-            self.subtitle_renderer.paint(
-                painter,
-                bounds,
-                content.text,
-                content.subtitle_style,
-            )
+            if content.subtitle_label:
+                self.subtitle_renderer.paint_stacked(
+                    painter,
+                    bounds,
+                    content.text,
+                    content.subtitle_style,
+                    content.subtitle_label,
+                    content.subtitle_label_style,
+                )
+            else:
+                self.subtitle_renderer.paint(
+                    painter,
+                    bounds,
+                    content.text,
+                    content.subtitle_style,
+                )
             return
         if content.kind is ContentType.PDF_PAGE:
             draw_contained_image(painter, bounds.toRect(), pdf_image)

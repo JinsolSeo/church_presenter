@@ -2,8 +2,9 @@
 
 Church Presenter는 한 명의 운영자가 ATEM용 송출 Key/PDF/영상 출력과 현장용
 PDF/영상 출력을 독립적으로 제어하는 PySide6 데스크톱 애플리케이션입니다.
-현재 Phase 1·2 범위인 TXT 자막, PDF, 검정·크로마키 빈 화면, Preview/Live TAKE, 멀티모니터,
-Simulation Mode, 로컬 영상 및 로컬/YouTube 혼합 배경음악 재생목록을 지원합니다. 화면의 채널명은
+현재 Phase 1·2 범위인 즉석 문구·준비된 찬양·성경 자막, PDF, 검정·크로마키 빈 화면,
+Preview/Live TAKE, 멀티모니터,
+Simulation Mode, 로컬/YouTube 영상 및 로컬/YouTube 혼합 배경음악 재생목록을 지원합니다. 화면의 채널명은
 `송출`과 `현장`으로 표시하되 내부 상태 모델의 Broadcast/Venue 명칭은 유지합니다.
 Controller UI는 FHD(1920×1080)를 기준으로 구성되며 Light Professional, Dark
 Modern, Minimalist Light, Warm Linen, Deep Ocean, Graphite Violet 테마를 실행 중
@@ -22,8 +23,15 @@ TAKE BOTH도 자동 실행됩니다. PDF 파일은 파일명 내림차순, 페�
 태블릿·스마트폰으로 Controller 화면을 미러링하고 직접 조작할 수 있습니다. 서버는
 노트북 안에서만 실행되며 여러 원격 기기의 동시 접속을 지원합니다.
 
-영상은 `파일 선택 → Preview Cue → TAKE → Live Cue → Play` 순서로만 재생됩니다.
-파일 선택만으로 decoder를 시작하지 않으며, Preview Cue와 TAKE만으로도 영상과
+콘텐츠 영역은 `즉석`, `찬양`, `성경`, `PDF`, `영상`, `음악`, `빈 화면`의 한 단계
+탭으로 구성됩니다. 즉석 탭의 문구는 돌발 상황용이며 예배 순서에는 저장되지 않습니다.
+준비된 찬양과 주간 성경 콘티는 각각의 탭에서 Preview/TAKE하고
+예배 순서에 의미 참조로 저장할 수 있습니다. 성경 본문 JSON은 저작권 확인 없이
+저장소에 포함하지 않으며 운영자가 로컬 파일을 선택합니다.
+
+영상은 로컬 파일과 공개 단일 YouTube URL 모두 `항목 선택 → Preview Cue → TAKE →
+Live Cue → Play` 순서로만 재생됩니다. 항목 선택만으로 decoder를 시작하지 않으며,
+Preview Cue와 TAKE만으로도 영상과
 오디오가 재생되지는 않습니다. 영상 Play 시 재생 중인 배경음악은 자동으로 Pause되며
 영상이 끝나도 자동 재개되지 않습니다.
 
@@ -45,7 +53,10 @@ macOS 개발 환경은 `brew install mpv` 후 위 설치 명령을 실행합니�
 `CHURCH_PRESENTER_LIBMPV_DIR`에 절대 경로를 지정할 수 있습니다. `yt-dlp`와
 `python-mpv` Python 패키지는
 프로젝트 의존성으로 설치됩니다. YouTube extractor 변경 대응이 필요할 때는
-`python -m pip install --upgrade yt-dlp`로 갱신합니다.
+영상 탭의 `기능 최신화`를 사용합니다. 이 버튼은 실행 중인 프로젝트 `.venv`에서
+`yt-dlp[default]`와 호환 범위의 `python-mpv`를 갱신하며, 완료 후 앱을 다시 시작해야
+합니다. 수동으로는 `python -m pip install --upgrade "yt-dlp[default]"`를 사용할 수
+있습니다.
 
 개발용 한 모니터에서는 상단 `화면 / 오디오 설정`에서 Simulation Mode를 선택하고
 가상 해상도, 연결 상태 및 공통 오디오 출력 장치를 정한 뒤 `출력 시작`을 누릅니다. Preview를
@@ -91,16 +102,18 @@ mypy src
 python scripts/generate_sample_assets.py
 ```
 
-기본 샘플은 `sample_assets` 아래 자막, PDF, 12초 영상, WAV 3곡과 JSON
+기본 샘플은 `sample_assets` 아래 곡 JSON 4개, PDF, 12초 영상, WAV 3곡과 JSON
 재생목록으로 제공됩니다. 생성 스크립트는 외부 FFmpeg를 우선 사용하고, 없으면
 Qt Multimedia encoder로 MP4를 생성합니다. 자세한 조작법은
 [`docs/user-guide.md`](docs/user-guide.md), 출력 구조는
 [`docs/architecture.md`](docs/architecture.md), ATEM 연결은
 [`docs/atem-setup.md`](docs/atem-setup.md), 미디어 정책은
 [`docs/media-playback.md`](docs/media-playback.md), Windows 검증은
-[`docs/windows-media-test.md`](docs/windows-media-test.md)를 참고하십시오. 이전 오류와 설계
+[`docs/windows-media-test.md`](docs/windows-media-test.md), 성경 JSON 형식과 재생성 방법은
+[`docs/bible-data.md`](docs/bible-data.md), 곡 JSON 및 찬양 콘티 형식은
+[`docs/song-data.md`](docs/song-data.md)를 참고하십시오. 이전 오류와 설계
 시행착오는 [`docs/session-handoff.md`](docs/session-handoff.md)에 정리되어 있습니다.
 
-YouTube 영상 출력·검색·playlist import·다운로드, 기타 웹 스트리밍, 카메라 캡처,
-OBS, ATEM 직접 제어는 포함하지 않습니다. YouTube
-배경음악은 공개 단일 영상 URL의 오디오 스트림만 실시간으로 해석해 재생합니다.
+YouTube 검색·playlist import·다운로드, 기타 웹 스트리밍, 카메라 캡처, OBS, ATEM
+직접 제어는 포함하지 않습니다. 영상과 배경음악의 YouTube 항목은 공개 단일 영상
+URL의 스트림을 실시간으로 해석해 재생합니다.

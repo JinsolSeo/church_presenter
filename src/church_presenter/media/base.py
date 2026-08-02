@@ -6,6 +6,8 @@ from PySide6.QtCore import QObject, Signal
 
 from church_presenter.domain.enums import PlaybackStatus
 
+MediaSource = Path | str
+
 
 class MediaPlaybackBackend(QObject):
     """Replaceable local-media backend contract with Qt-neutral commands."""
@@ -21,8 +23,8 @@ class MediaPlaybackBackend(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
 
-    def load(self, path: Path) -> None:
-        """Cue a local media file without starting playback."""
+    def load(self, path: MediaSource) -> None:
+        """Cue a local file or resolved network media source without playing it."""
         raise NotImplementedError
 
     def play(self) -> None:
@@ -67,6 +69,6 @@ class MediaPlaybackBackend(QObject):
         raise NotImplementedError
 
     @property
-    def path(self) -> Path | None:
-        """Return the loaded local path."""
+    def path(self) -> MediaSource | None:
+        """Return the stable local path or original network URL."""
         raise NotImplementedError

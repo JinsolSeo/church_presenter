@@ -323,9 +323,11 @@ def test_router_selects_backend_and_stops_previous(tmp_path: Path) -> None:
     router = AudioBackendRouter(local, youtube)
     router.prepare(PlaylistItem("local", local_path, "Local"))
     assert local.path == local_path
+    assert router.path == local_path
     router.prepare(PlaylistItem.youtube("yt", "https://youtu.be/abc123"))
     assert local.status is PlaybackStatus.STOPPED
     assert youtube.source == "https://youtu.be/abc123"
+    assert router.path is None
 
 
 def test_youtube_failure_plays_local_fallback(tmp_path: Path) -> None:

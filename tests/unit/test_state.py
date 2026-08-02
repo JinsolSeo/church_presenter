@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from church_presenter.domain.enums import ChannelRole, ContentType
-from church_presenter.domain.models import Content, SubtitleStyle
+from church_presenter.domain.models import (
+    Content,
+    SubtitleStyle,
+    default_bible_reference_style,
+)
 from church_presenter.domain.state import ApplicationState
 
 
@@ -76,3 +80,25 @@ def test_solid_color_round_trip_and_take() -> None:
     assert state.venue.live_content.kind is ContentType.BLACK
     assert state.take(ChannelRole.VENUE) == (True, "")
     assert state.venue.live_content == content
+
+
+def test_bible_reference_layer_round_trips_independently() -> None:
+    body_style = SubtitleStyle(font_size=64, y_ratio=0.8)
+    reference_style = default_bible_reference_style()
+    content = Content.subtitle(
+        "본문",
+        0,
+        body_style,
+        "#00FF00",
+        source="bible",
+        reference="JHN.3.16",
+        label="요한복음 3:16",
+        label_style=reference_style,
+    )
+
+    restored = Content.from_dict(content.to_dict())
+
+    assert restored.text == "본문"
+    assert restored.subtitle_style == body_style
+    assert restored.subtitle_label == "요한복음 3:16"
+    assert restored.subtitle_label_style == reference_style

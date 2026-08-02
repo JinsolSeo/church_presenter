@@ -52,6 +52,10 @@
 - [ ] 네트워크 차단 시 로컬 fallback 전환 문구와 재생
 - [ ] fallback 없음/삭제 시 항목 오류만 발생하고 로컬 미디어 유지
 - [ ] yt-dlp 미설치 상태에서 로컬 음악/영상 유지
+- [ ] 영상 탭 `기능 최신화`가 프로젝트 `.venv` Python을 사용하고 진행 중 UI 응답 유지
+- [ ] 최신화 결과에 yt-dlp/yt-dlp-ejs/python-mpv 버전과 Deno PATH 감지 상태 표시
+- [ ] 최신화 성공 후 재시작 안내 및 재시작한 프로세스에서 YouTube 음악 재생
+- [ ] 최신화·재시작 후 JS challenge 경고 없이 EJS를 사용해 실제 오디오 스트림 해석
 - [ ] `mpv-2.dll` 없음 또는 로드 실패 상태에서 앱 유지
 - [ ] 종료 후 libmpv thread/process 잔류 없음
 
@@ -60,7 +64,9 @@ yt-dlp를 설치한 뒤, `mpv-2.dll`을 제공하는 libmpv 빌드의 디렉터�
 `CHURCH_PRESENTER_LIBMPV_DIR`의 절대 경로로 지정합니다. 배포 패키지는 DLL과 의존
 DLL을 실행 파일 옆 `libmpv` 폴더에 포함하고 대상 PC에서 새 프로세스로 실행해 로드
 여부를 확인합니다. Python과 libmpv의 32/64비트가 일치해야 합니다. YouTube 검증 전에는
-`python -m pip install --upgrade yt-dlp`로 extractor를 갱신합니다.
+영상 탭의 `기능 최신화`로 extractor, EJS, Python mpv binding을 함께 갱신합니다. UI를
+사용할 수 없는 개발 환경에서는 `python -m pip install --upgrade "yt-dlp[default]"`로
+extractor와 EJS를 갱신합니다.
 
 ## 운영 안정성
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -10,7 +12,9 @@ from church_presenter.domain.models import AppSettings, ScreenInfo, SubtitleStyl
 from church_presenter.services.audio_device_service import AudioOutputDeviceInfo
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.settings_service import SettingsService
+from church_presenter.services.song_service import load_song
 from church_presenter.ui.dialogs.screen_settings_dialog import ScreenSettingsDialog
+from church_presenter.ui.dialogs.song_json_dialog import SongJsonDialog
 from church_presenter.ui.dialogs.subtitle_merge_dialog import SubtitleMergeDialog
 from church_presenter.ui.dialogs.subtitle_style_dialog import (
     SubtitleStyleDialog,
@@ -46,6 +50,68 @@ def test_style_dialog_has_default_presets_and_key_conflict(qtbot, tmp_path: Path
     dialog.group_size.setValue(4)
     dialog._accept()
     assert dialog.result_group_size == 4
+
+
+def test_bible_reference_style_preview_is_stacked_with_body(qtbot, tmp_path: Path) -> None:
+    body_style = SubtitleStyle(font_size=60)
+    reference_style = SubtitleStyle(font_size=28, alignment=TextAlignment.LEFT)
+    dialog = SubtitleStyleDialog(
+        SettingsService(tmp_path),
+        PdfRenderCoordinator(),
+        reference_style,
+        "#00FF00",
+        "Lower Third",
+        preview_text="마태복음 1:1-5",
+        reference_mode=True,
+        body_style=body_style,
+    )
+    qtbot.addWidget(dialog)
+
+    preview = dialog.preview.content
+    assert preview.text == "태초에 하나님이 천지를 창조하시니라"
+    assert preview.subtitle_style == body_style
+    assert preview.subtitle_label == "마태복음 1:1-5"
+    assert preview.subtitle_label_style == reference_style
+
+
+def test_song_json_dialog_adds_sections_and_saves_with_title_filename(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "임시 이름.json"
+    expected = tmp_path / "이번 주 찬양.json"
+    dialog = SongJsonDialog(tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.title_edit.setText("이번 주 찬양")
+    dialog.section_list.setCurrentRow(0)
+    dialog.lyrics_edit.setPlainText("Verse 첫 줄\nVerse 둘째 줄")
+    dialog.section_list.setCurrentRow(1)
+    dialog.lyrics_edit.setPlainText("Chorus 첫 줄\nChorus 둘째 줄")
+    dialog.add_type_combo.setCurrentIndex(dialog.add_type_combo.findText("Bridge"))
+    qtbot.mouseClick(dialog.add_section_button, Qt.MouseButton.LeftButton)
+    assert dialog.section_list.count() == 3
+    assert dialog.sections[-1].type.value == "bridge"
+    dialog.lyrics_edit.setPlainText("Bridge 첫 줄")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(destination), "Song JSON (*.json)"),
+    )
+
+    dialog._save()
+
+    song = load_song(expected)
+    assert dialog.saved_path == expected.resolve()
+    assert song.id == "이번 주 찬양"
+    assert song.title == "이번 주 찬양"
+    assert song.artist == ""
+    assert song.section("verse_1").lines == ("Verse 첫 줄", "Verse 둘째 줄")
+    assert song.section("bridge").lines == ("Bridge 첫 줄",)
+    assert song.default_sequence == ("verse_1", "chorus", "bridge")
+    payload = json.loads(expected.read_text(encoding="utf-8"))
+    assert "id" not in payload
+    assert "artist" not in payload
 
 
 def test_subtitle_merge_dialog_orders_and_saves_with_automatic_padding(

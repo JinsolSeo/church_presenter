@@ -4,9 +4,9 @@ from pathlib import Path
 
 import fitz
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
 from church_presenter.domain.enums import ChannelRole, ContentType
 from church_presenter.domain.models import (
@@ -14,7 +14,6 @@ from church_presenter.domain.models import (
     Content,
     PreviewPreset,
     ScreenInfo,
-    SubtitleDocument,
     SubtitleStyle,
 )
 from church_presenter.rendering.output_surface import OutputSurface
@@ -27,6 +26,8 @@ from church_presenter.ui.controller_window import (
     ControllerWindow,
 )
 from church_presenter.ui.styles import apply_application_style
+
+SAMPLE_SONGS = Path(__file__).parents[2] / "sample_assets" / "songs"
 
 
 def make_controller(qtbot, tmp_path: Path) -> ControllerWindow:
@@ -58,6 +59,26 @@ def create_pdf(path: Path, page_count: int = 3) -> None:
         page.insert_text((72, 72), f"Page {page_index + 1}", fontsize=24)
     document.save(path)
     document.close()
+
+
+def prepare_sample_praise(
+    window: ControllerWindow,
+    *,
+    group_size: int = 1,
+    section_ids: tuple[str, ...] = ("verse_1",),
+) -> None:
+    panel = window.subtitle_panel
+    panel.set_group_size(group_size)
+    assert panel.load_song_paths([SAMPLE_SONGS / "01_grace_morning.json"])
+    for row in range(panel.section_list.count()):
+        item = panel.section_list.item(row)
+        item.setCheckState(
+            Qt.CheckState.Checked
+            if item.data(Qt.ItemDataRole.UserRole) in section_ids
+            else Qt.CheckState.Unchecked
+        )
+    panel.add_selected_sections()
+    panel.is_modified = False
 
 
 def test_preview_selection_waits_for_take(qtbot, tmp_path: Path) -> None:
@@ -109,17 +130,16 @@ def test_all_themes_subtitle_cards_use_only_live_and_preview_highlights(
     window = make_controller(qtbot, tmp_path)
     window.theme_combo.setCurrentIndex(window.theme_combo.findData(theme_id))
     panel = window.subtitle_panel
-    panel.document.lines = ["현재 Live", "이전", "현재 Preview", "다음", "일반"]
-    panel.document.group_size = 1
+    prepare_sample_praise(window, section_ids=("verse_1", "chorus"))
     panel.live_index = 0
     panel.preview_index = 2
-    panel._refresh()
-
-    live = panel.card_list.item(0)
-    previous = panel.card_list.item(1)
-    preview = panel.card_list.item(2)
-    next_item = panel.card_list.item(3)
-    normal = panel.card_list.item(4)
+    panel._refresh_labels()
+    cue_items = [
+        panel.card_list.item(row)
+        for row in range(panel.card_list.count())
+        if panel.card_list.item(row).data(Qt.ItemDataRole.UserRole)[0] == "cue"
+    ]
+    live, previous, preview, next_item, normal = cue_items[:5]
 
     assert panel.card_list.objectName() == "SubtitleCardList"
     assert live.background().color() == QColor(
@@ -130,9 +150,7 @@ def test_all_themes_subtitle_cards_use_only_live_and_preview_highlights(
     )
     assert previous.background().color().alpha() == 0
     assert next_item.background().color().alpha() == 0
-    expected_text = QColor(
-        str(window.theme_manager.current_value("colors", "text_primary"))
-    )
+    expected_text = QColor(str(window.theme_manager.current_value("colors", "text_primary")))
     assert previous.foreground().color() == expected_text
     assert preview.foreground().color() == QColor(
         str(window.theme_manager.current_value("colors", "text_on_accent"))
@@ -141,13 +159,13 @@ def test_all_themes_subtitle_cards_use_only_live_and_preview_highlights(
     assert normal.foreground().color() == expected_text
     assert live.text().startswith("[LIVE]  ")
     assert preview.text().startswith("[PREVIEW]  ")
-    assert previous.text() == "이전"
-    assert next_item.text() == "다음"
-    assert normal.text() == "일반"
+    assert not previous.text().startswith("[")
+    assert not next_item.text().startswith("[")
+    assert not normal.text().startswith("[")
 
     panel.live_index = panel.preview_index
     panel._refresh_labels()
-    combined = panel.card_list.item(panel.preview_index)
+    combined = cue_items[panel.preview_index]
     assert combined.text().startswith("[LIVE + PREVIEW]  ")
     assert panel.card_list.property("selectedCardLive") is True
     assert combined.background().color() == QColor(
@@ -196,9 +214,8 @@ def test_controller_layout_declares_fhd_baseline_and_responsive_minimum(
 
 def test_named_preview_preset_applies_without_changing_live(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
-    window.subtitle_panel.document.lines = ["찬양"]
-    window.subtitle_panel.document.group_size = 1
-    broadcast = Content.subtitle("찬양", 0, SubtitleStyle(), "#00FF00")
+    prepare_sample_praise(window)
+    broadcast = window.subtitle_panel._content_at(0)
     venue = Content.black()
     window.set_preview(ChannelRole.BROADCAST, broadcast)
     window.set_preview(ChannelRole.VENUE, venue)
@@ -276,8 +293,9 @@ def test_row_save_is_temporary_until_saved_as(
     qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=10000)
     window.pdf_panel.navigate_for_roles(2, (ChannelRole.BROADCAST,))
     qtbot.waitUntil(
-        lambda: window.state.broadcast.is_ready
-        and window.state.broadcast.preview_content.pdf_page == 2,
+        lambda: (
+            window.state.broadcast.is_ready and window.state.broadcast.preview_content.pdf_page == 2
+        ),
         timeout=10000,
     )
     live_before = (
@@ -386,8 +404,7 @@ def test_loaded_order_resets_list_and_uses_current_documents(qtbot, tmp_path: Pa
     create_pdf(current_pdf, page_count=4)
     window = make_controller(qtbot, tmp_path)
     window.save_preview_preset("기존 항목")
-    window.subtitle_panel.document.lines = ["이번 주 첫 자막", "이번 주 둘째 자막"]
-    window.subtitle_panel.document.group_size = 1
+    prepare_sample_praise(window)
     qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
     window.pdf_panel.file_list.setCurrentRow(0)
     qtbot.waitUntil(lambda: window.pdf_panel.page_count == 4, timeout=5000)
@@ -407,7 +424,7 @@ def test_loaded_order_resets_list_and_uses_current_documents(qtbot, tmp_path: Pa
     assert set(window.preview_preset_panel.preset_buttons) == {"말씀 시작"}
     assert window.apply_preview_preset("말씀 시작")
 
-    assert window.state.broadcast.preview_content.text == "이번 주 둘째 자막"
+    assert window.state.broadcast.preview_content.text == "주님의 은혜를 노래해"
     assert window.state.broadcast.preview_content.subtitle_card_index == 1
     assert window.state.venue.preview_content.pdf_path == current_pdf
     assert window.state.venue.preview_content.pdf_page == 2
@@ -472,7 +489,7 @@ def test_compact_controller_fits_without_vertical_scroll(qtbot, tmp_path: Path) 
 
     assert window.root_scroll.horizontalScrollBar().maximum() == 0
     assert window.root_scroll.verticalScrollBar().maximum() == 0
-    assert window.subtitle_panel.file_label.width() > 0
+    assert window.subtitle_panel.song_combo.width() > 0
 
 
 def test_controller_gives_more_extra_height_to_monitors(qtbot, tmp_path: Path) -> None:
@@ -587,9 +604,7 @@ def test_workspace_splitter_state_is_restored(qtbot, tmp_path: Path) -> None:
 
     application = QApplication.instance()
     assert isinstance(application, QApplication)
-    screens = MockScreenService(
-        [ScreenInfo("virtual", "CI Virtual", 0, 0, 1280, 720, 1.0, True)]
-    )
+    screens = MockScreenService([ScreenInfo("virtual", "CI Virtual", 0, 0, 1280, 720, 1.0, True)])
     service = SettingsService(tmp_path / "settings")
     restored = ControllerWindow(
         application,
@@ -643,106 +658,86 @@ def test_simulation_mode_uses_real_output_surface(qtbot, tmp_path: Path) -> None
     window.stop_outputs()
 
 
-def test_keyboard_navigation_does_not_steal_text_edit_keys(qtbot, tmp_path: Path) -> None:
+def test_praise_keyboard_navigation_uses_the_read_only_card_list(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document.lines = ["A", "B", "C"]
-    panel.document.group_size = 1
-    panel.preview_index = 0
-    panel._refresh()
-    panel.line_edit.setFocus()
-    qtbot.keyClick(panel.line_edit, Qt.Key.Key_Right)
-    assert panel.preview_index == 0
-    window.setFocus()
-    qtbot.keyClick(window, Qt.Key.Key_Right)
+    window.tabs.setCurrentWidget(panel)
+    prepare_sample_praise(window)
+    panel.navigate(0)
+    panel.card_list.setFocus()
+    qtbot.keyClick(panel.card_list, Qt.Key.Key_Right)
+
     assert panel.preview_index == 1
+    assert not hasattr(panel, "line_edit")
+    assert not hasattr(panel, "line_list")
 
 
-def test_subtitle_reload_and_open_continue_when_user_chooses_no(
-    qtbot,
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    current = tmp_path / "current.txt"
-    replacement = tmp_path / "replacement.txt"
-    current.write_text("원래 문장\n", encoding="utf-8")
-    replacement.write_text("새 파일 문장\n", encoding="utf-8")
-    window = make_controller(qtbot, tmp_path)
-    panel = window.subtitle_panel
-    assert panel.load_path(current, warn=False)
-
-    panel.document.edit_line(0, "메모리 수정")
-    current.write_text("디스크에서 변경\n", encoding="utf-8")
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
-    )
-    assert panel.reload()
-    assert panel.document.lines == ["디스크에서 변경"]
-    assert not panel.document.is_modified
-
-    panel.document.edit_line(0, "다시 수정")
-    monkeypatch.setattr(
-        QFileDialog,
-        "getOpenFileName",
-        lambda *_args, **_kwargs: (str(replacement), "Text files (*.txt)"),
-    )
-    panel.open_file()
-    assert panel.document.path == replacement.resolve()
-    assert panel.document.lines == ["새 파일 문장"]
-
-
-def test_subtitle_add_inserts_above_selection_and_actions_share_one_row(
+def test_praise_single_add_button_supports_chorus_and_full_configurations(
     qtbot,
     tmp_path: Path,
 ) -> None:
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document = SubtitleDocument(lines=["A", "B", "C"], group_size=1)
-    panel.set_group_size(1)
-    panel.preview_index = 1
-    panel._refresh()
-    panel.line_list.setCurrentRow(0)
+    panel.set_group_size(2)
+    assert panel.load_song_paths([SAMPLE_SONGS / "01_grace_morning.json"])
+    panel.add_selected_sections()
+    for row in range(panel.section_list.count()):
+        panel.section_list.item(row).setCheckState(Qt.CheckState.Checked)
+    panel.add_selected_sections()
 
-    qtbot.mouseClick(panel.add_line_button, Qt.MouseButton.LeftButton)
-
-    assert panel.document.lines == ["A", "새 자막", "B", "C"]
-    assert panel.line_list.currentItem().data(Qt.ItemDataRole.UserRole) == 1
-    assert panel.line_edit.text() == "새 자막"
-    buttons = (
-        panel.add_line_button,
-        panel.delete_line_button,
-        panel.move_up_button,
-        panel.move_down_button,
-    )
-    assert len({button.y() for button in buttons}) == 1
-    assert all(button.width() <= 110 for button in buttons)
-    panel.document.is_modified = False
+    assert len(panel.entries) == 2
+    assert panel.entries[0].sequence == ("chorus",)
+    assert panel.entries[1].sequence.count("chorus") == 3
+    assert panel.output_count == 13
+    assert panel.is_modified
+    panel.is_modified = False
 
 
-def test_subtitle_line_edit_enter_only_commits_without_take(
+def test_praise_panel_keeps_controls_left_and_cards_wide_without_elision(
     qtbot,
     tmp_path: Path,
 ) -> None:
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document = SubtitleDocument(lines=["수정 전"], group_size=1)
-    panel.preview_index = 0
-    panel._refresh()
-    panel.line_list.setCurrentRow(0)
-    preview = Content.subtitle("수정 전", 0, SubtitleStyle(), "#00FF00")
-    window.set_preview(ChannelRole.BROADCAST, preview)
+    window.tabs.setCurrentWidget(panel)
+    prepare_sample_praise(window)
 
-    assert not window.sync_content_check.isChecked()
-    panel.line_edit.setFocus()
-    panel.line_edit.setText("수정 후")
-    qtbot.keyClick(panel.line_edit, Qt.Key.Key_Return)
-    panel.document.is_modified = False
-
-    assert panel.document.lines == ["수정 후"]
-    assert window.state.broadcast.preview_content == preview
-    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+    controls_position = panel.open_song_button.mapTo(panel, QPoint(0, 0))
+    cards_position = panel.card_list.mapTo(panel, QPoint(0, 0))
+    assert controls_position.x() < cards_position.x()
+    assert cards_position.x() >= 350
+    assert panel.card_list.width() > panel.open_song_button.width() * 2
+    assert panel.card_list.wordWrap()
+    assert panel.card_list.textElideMode() is Qt.TextElideMode.ElideNone
+    last_section = panel.section_list.item(panel.section_list.count() - 1)
+    assert (
+        panel.section_list.visualItemRect(last_section).bottom()
+        <= panel.section_list.viewport().height()
+    )
+    section_position = panel.section_list.mapTo(panel, QPoint(0, 0))
+    add_position = panel.add_button.mapTo(panel, QPoint(0, 0))
+    assert section_position.x() + panel.section_list.width() <= add_position.x()
+    assert panel.add_button.y() < panel.remove_button.y() < panel.move_up_button.y()
+    assert panel.move_up_button.y() == panel.move_down_button.y()
+    assert (
+        panel.style_button.geometry().center().y()
+        == panel.open_song_button.geometry().center().y()
+    )
+    assert (
+        panel.create_song_button.geometry().center().y()
+        == panel.open_song_button.geometry().center().y()
+    )
+    assert (
+        panel.previous_button.geometry().center().y()
+        == panel.take_button.geometry().center().y()
+    )
+    assert "은혜의 아침" in panel.card_list.item(0).text()
+    assert panel.open_song_button.text() == "곡 JSON"
+    assert panel.open_plan_button.text() == "콘티 열기"
+    assert panel.save_plan_button.text() == "콘티 저장"
+    assert panel.create_song_button.text() == "곡 만들기"
+    assert panel.add_button.text() == "추가"
+    assert panel.style_button.text() == "Style"
 
 
 def test_blank_screen_presets_prepare_preview_before_take(
@@ -792,10 +787,7 @@ def test_linked_navigation_advances_subtitle_and_venue_pdf(qtbot, tmp_path: Path
     create_pdf(path)
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document.lines = ["자막 1", "자막 2", "자막 3"]
-    panel.document.group_size = 1
-    panel.preview_index = 0
-    panel._refresh()
+    prepare_sample_praise(window)
     panel.navigate(0)
     qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
     window.pdf_panel.set_target_role(ChannelRole.VENUE)
@@ -830,9 +822,7 @@ def test_focused_content_tab_keeps_individual_navigation(qtbot, tmp_path: Path) 
     create_pdf(path)
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document.lines = ["자막 1", "자막 2", "자막 3"]
-    panel.document.group_size = 1
-    panel._refresh()
+    prepare_sample_praise(window)
     panel.navigate(0)
     qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
     window.pdf_panel.set_target_role(ChannelRole.VENUE)
@@ -934,9 +924,7 @@ def test_linked_auto_take_moves_live_with_page_and_arrow_keys(
     create_pdf(path)
     window = make_controller(qtbot, tmp_path)
     panel = window.subtitle_panel
-    panel.document.lines = ["자막 1", "자막 2", "자막 3"]
-    panel.document.group_size = 1
-    panel._refresh()
+    prepare_sample_praise(window)
     panel.navigate(0)
     qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
     window.pdf_panel.set_target_role(ChannelRole.VENUE)
@@ -955,15 +943,19 @@ def test_linked_auto_take_moves_live_with_page_and_arrow_keys(
     assert panel.preview_index == 1
     assert window.pdf_panel.preview_page == 1
     qtbot.waitUntil(
-        lambda: window.state.broadcast.live_content.subtitle_card_index == 1
-        and window.state.venue.live_content.pdf_page == 1,
+        lambda: (
+            window.state.broadcast.live_content.subtitle_card_index == 1
+            and window.state.venue.live_content.pdf_page == 1
+        ),
         timeout=10000,
     )
 
     qtbot.keyClick(window.sync_next_button, Qt.Key.Key_Up)
     qtbot.waitUntil(
-        lambda: window.state.broadcast.live_content.subtitle_card_index == 0
-        and window.state.venue.live_content.pdf_page == 0,
+        lambda: (
+            window.state.broadcast.live_content.subtitle_card_index == 0
+            and window.state.venue.live_content.pdf_page == 0
+        ),
         timeout=10000,
     )
 

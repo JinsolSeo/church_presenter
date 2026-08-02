@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath
 
@@ -16,17 +18,9 @@ class SubtitleRenderer:
         if not text:
             return
         scale = bounds.height() / self.REFERENCE_HEIGHT
-        font = QFont(style.font_family)
-        font.setPixelSize(max(8, round(style.font_size * scale)))
-        font.setBold(style.bold)
-        metrics = QFontMetricsF(font)
         max_width = max(40.0, bounds.width() * style.max_width_ratio)
-        lines = self._wrapped_lines(text, metrics, max_width)
-        line_height = metrics.height() * style.line_spacing
-        text_height = max(metrics.height(), len(lines) * line_height)
-        actual_width = min(
-            max_width,
-            max((metrics.horizontalAdvance(line) for line in lines), default=0.0),
+        font, metrics, lines, line_height, text_height, actual_width = self._layout_text(
+            text, style, scale, max_width
         )
         padding = style.background_padding * scale
         box_width = min(bounds.width(), actual_width + padding * 2)
@@ -38,12 +32,160 @@ class SubtitleRenderer:
         left = self._anchor_x(anchor.x(), box_width, style.horizontal_anchor)
         top = self._anchor_y(anchor.y(), box_height, style.vertical_anchor)
         box = QRectF(left, top, box_width, box_height)
+        self._paint_box(
+            painter,
+            box,
+            padding,
+            font,
+            metrics,
+            lines,
+            line_height,
+            style,
+            scale,
+            draw_background=True,
+        )
 
+    def paint_stacked(
+        self,
+        painter: QPainter,
+        bounds: QRectF,
+        body_text: str,
+        body_style: SubtitleStyle,
+        reference_text: str,
+        reference_style: SubtitleStyle,
+    ) -> None:
+        """Paint a reference directly above its body as one anchored block."""
+        if not body_text:
+            return
+        if not reference_text:
+            self.paint(painter, bounds, body_text, body_style)
+            return
+        scale = bounds.height() / self.REFERENCE_HEIGHT
+        max_width = max(40.0, bounds.width() * body_style.max_width_ratio)
+        body = self._layout_text(body_text, body_style, scale, max_width)
+        inherited_reference_style = replace(
+            body_style,
+            font_family=reference_style.font_family,
+            font_size=reference_style.font_size,
+            text_color=reference_style.text_color,
+            bold=reference_style.bold,
+            alignment=reference_style.alignment,
+        )
+        reference = self._layout_text(
+            reference_text,
+            inherited_reference_style,
+            scale,
+            max_width,
+        )
+        body_font, body_metrics, body_lines, body_line_height, body_height, body_width = body
+        (
+            reference_font,
+            reference_metrics,
+            reference_lines,
+            reference_line_height,
+            reference_height,
+            reference_width,
+        ) = reference
+        padding = body_style.background_padding * scale
+        gap = 10.0 * scale
+        group_width = min(
+            bounds.width(),
+            max(body_width, reference_width) + padding * 2,
+        )
+        group_height = reference_height + gap + body_height + padding * 2
+        anchor = QPointF(
+            bounds.x() + bounds.width() * body_style.x_ratio,
+            bounds.y() + bounds.height() * body_style.y_ratio,
+        )
+        left = self._anchor_x(anchor.x(), group_width, body_style.horizontal_anchor)
+        top = self._anchor_y(anchor.y(), group_height, body_style.vertical_anchor)
+        left = max(bounds.left(), min(left, bounds.right() - group_width))
+        top = max(bounds.top(), min(top, bounds.bottom() - group_height))
+        group_box = QRectF(left, top, group_width, group_height)
+        painter.setPen(Qt.PenStyle.NoPen)
+        background = QColor(body_style.background_color)
+        background.setAlphaF(max(0.0, min(1.0, body_style.background_opacity)))
+        painter.setBrush(background)
+        painter.drawRoundedRect(group_box, 8 * scale, 8 * scale)
+        content_left = left + padding
+        content_width = max(1.0, group_width - padding * 2)
+        reference_box = QRectF(
+            content_left,
+            top + padding,
+            content_width,
+            reference_height,
+        )
+        body_box = QRectF(
+            content_left,
+            reference_box.bottom() + gap,
+            content_width,
+            body_height,
+        )
+        self._paint_box(
+            painter,
+            reference_box,
+            0.0,
+            reference_font,
+            reference_metrics,
+            reference_lines,
+            reference_line_height,
+            inherited_reference_style,
+            scale,
+            draw_background=False,
+        )
+        self._paint_box(
+            painter,
+            body_box,
+            0.0,
+            body_font,
+            body_metrics,
+            body_lines,
+            body_line_height,
+            body_style,
+            scale,
+            draw_background=False,
+        )
+
+    def _layout_text(
+        self,
+        text: str,
+        style: SubtitleStyle,
+        scale: float,
+        max_width: float,
+    ) -> tuple[QFont, QFontMetricsF, list[str], float, float, float]:
+        font = QFont(style.font_family)
+        font.setPixelSize(max(8, round(style.font_size * scale)))
+        font.setBold(style.bold)
+        metrics = QFontMetricsF(font)
+        lines = self._wrapped_lines(text, metrics, max_width)
+        line_height = metrics.height() * style.line_spacing
+        text_height = max(metrics.height(), len(lines) * line_height)
+        actual_width = min(
+            max_width,
+            max((metrics.horizontalAdvance(line) for line in lines), default=0.0),
+        )
+        return font, metrics, lines, line_height, text_height, actual_width
+
+    def _paint_box(
+        self,
+        painter: QPainter,
+        box: QRectF,
+        padding: float,
+        font: QFont,
+        metrics: QFontMetricsF,
+        lines: list[str],
+        line_height: float,
+        style: SubtitleStyle,
+        scale: float,
+        *,
+        draw_background: bool,
+    ) -> None:
         background = QColor(style.background_color)
         background.setAlphaF(max(0.0, min(1.0, style.background_opacity)))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(background)
-        painter.drawRoundedRect(box, 8 * scale, 8 * scale)
+        if draw_background:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(background)
+            painter.drawRoundedRect(box, 8 * scale, 8 * scale)
 
         baseline = box.top() + padding + metrics.ascent()
         content_left = box.left() + padding

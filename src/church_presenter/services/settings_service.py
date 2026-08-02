@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any, Protocol, TypeVar
 from platformdirs import user_config_path
 
 from church_presenter.domain.models import AppSettings, PreviewPreset, SubtitleStyle
+from church_presenter.services.json_io import atomic_write_json
 
 LOGGER = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -136,22 +136,23 @@ class SettingsService:
     def _preview_presets_from_payload(data: object) -> list[PreviewPreset]:
         if not isinstance(data, dict):
             raise TypeError("preview preset root must be an object")
+        document_type = data.get("document_type")
+        if document_type not in {None, "church_presenter_worship_order"}:
+            raise ValueError("expected a Church Presenter worship-order document")
         rows = data.get("presets", [])
         if not isinstance(rows, list):
             raise TypeError("preview presets must be a list")
         version = data.get("version", 1)
-        if version == 2:
-            presets = [
-                PreviewPreset.from_preset_dict(row)
-                for row in rows
-                if isinstance(row, dict)
-            ]
-        else:
+        if version in {2, 3}:
+            presets = [PreviewPreset.from_preset_dict(row) for row in rows if isinstance(row, dict)]
+        elif version == 1:
             presets = [
                 PreviewPreset.from_dict(row).as_file_independent()
                 for row in rows
                 if isinstance(row, dict)
             ]
+        else:
+            raise ValueError(f"unsupported worship-order version: {version}")
         if len(presets) != len(rows):
             raise TypeError("each preview preset must be an object")
         names = [preset.name.casefold() for preset in presets]
@@ -165,23 +166,13 @@ class SettingsService:
         if len(names) != len(set(names)):
             raise ValueError("Preview preset names must be unique")
         return {
-            "version": 2,
+            "version": 3,
             "document_type": "church_presenter_worship_order",
             "presets": [preset.as_file_independent().to_preset_dict() for preset in presets],
         }
 
     def _atomic_json_write(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_write_json(path, payload)
 
     @staticmethod
     def _backup_corrupt(path: Path) -> Path | None:

@@ -67,6 +67,19 @@ class YtDlpResolver:
 
     def stream(self, url: str) -> ResolvedYouTubeStream:
         info = self._extract(url)
+        return self._stream_from_info(info, url, "오디오")
+
+    def video_stream(self, url: str) -> ResolvedYouTubeStream:
+        """Resolve one progressive stream containing both video and audio."""
+        info = self._extract_video(url)
+        return self._stream_from_info(info, url, "영상")
+
+    def _stream_from_info(
+        self,
+        info: dict[str, Any],
+        url: str,
+        media_label: str,
+    ) -> ResolvedYouTubeStream:
         stream_url = info.get("url")
         selected = info
         if not isinstance(stream_url, str) or not stream_url:
@@ -75,7 +88,7 @@ class YtDlpResolver:
                 selected = requested[0]
                 stream_url = selected.get("url")
         if not isinstance(stream_url, str) or not stream_url:
-            raise YouTubeResolverError("YouTube 오디오 스트림을 해석하지 못했습니다.")
+            raise YouTubeResolverError(f"YouTube {media_label} 스트림을 해석하지 못했습니다.")
         headers = self._http_headers(selected.get("http_headers") or info.get("http_headers"))
         downloader_options = selected.get("downloader_options") or info.get(
             "downloader_options"
@@ -97,6 +110,19 @@ class YtDlpResolver:
         )
 
     def _extract(self, url: str) -> dict[str, Any]:
+        return self._extract_with_format(url, "bestaudio/best")
+
+    def _extract_video(self, url: str) -> dict[str, Any]:
+        return self._extract_with_format(
+            url,
+            (
+                "best[protocol^=http][vcodec!=none][acodec!=none][ext=mp4]/"
+                "best[protocol^=http][vcodec!=none][acodec!=none]/"
+                "best[vcodec!=none][acodec!=none]"
+            ),
+        )
+
+    def _extract_with_format(self, url: str, format_selector: str) -> dict[str, Any]:
         cleaned = validate_youtube_url(url)
         try:
             module = importlib.import_module("yt_dlp")
@@ -109,7 +135,7 @@ class YtDlpResolver:
             "no_warnings": True,
             "skip_download": True,
             "noplaylist": True,
-            "format": "bestaudio/best",
+            "format": format_selector,
             "socket_timeout": self.socket_timeout,
             "retries": 1,
             "extractor_retries": 1,
@@ -169,22 +195,24 @@ class _ResolverTask(QRunnable):
         resolver: YtDlpResolver,
         url: str,
         *,
-        stream: bool,
+        mode: str,
     ) -> None:
         super().__init__()
         self.request_id = request_id
         self.resolver = resolver
         self.url = url
-        self.stream_mode = stream
+        self.mode = mode
         self.signals = _WorkerSignals()
 
     def run(self) -> None:
         try:
-            result = (
-                self.resolver.stream(self.url)
-                if self.stream_mode
-                else self.resolver.metadata(self.url)
-            )
+            result: ResolvedYouTubeStream | YouTubeMetadata
+            if self.mode == "video":
+                result = self.resolver.video_stream(self.url)
+            elif self.mode == "audio":
+                result = self.resolver.stream(self.url)
+            else:
+                result = self.resolver.metadata(self.url)
         except (ValueError, YouTubeResolverError) as error:
             LOGGER.exception("YouTube resolver request failed for %s", self.request_id)
             self.signals.failed.emit(self.request_id, str(error))
@@ -207,10 +235,13 @@ class YouTubeWorkerService(QObject):
         self._closed = False
 
     def request_metadata(self, request_id: str, url: str) -> bool:
-        return self._request(request_id, url, stream=False)
+        return self._request(request_id, url, mode="metadata")
 
     def request_stream(self, request_id: str, url: str) -> bool:
-        return self._request(request_id, url, stream=True)
+        return self._request(request_id, url, mode="audio")
+
+    def request_video_stream(self, request_id: str, url: str) -> bool:
+        return self._request(request_id, url, mode="video")
 
     def cancel(self, request_id: str) -> None:
         self._pending.discard(request_id)
@@ -221,11 +252,11 @@ class YouTubeWorkerService(QObject):
         self.pool.clear()
         self.pool.waitForDone(1000)
 
-    def _request(self, request_id: str, url: str, *, stream: bool) -> bool:
+    def _request(self, request_id: str, url: str, *, mode: str) -> bool:
         if self._closed or request_id in self._pending:
             return False
         self._pending.add(request_id)
-        task = _ResolverTask(request_id, self.resolver, url, stream=stream)
+        task = _ResolverTask(request_id, self.resolver, url, mode=mode)
         task.signals.succeeded.connect(self._succeeded)
         task.signals.failed.connect(self._failed)
         self.pool.start(task)

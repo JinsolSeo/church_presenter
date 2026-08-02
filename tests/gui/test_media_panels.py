@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from church_presenter.domain.enums import (
     AudioSourceType,
@@ -24,6 +24,7 @@ from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.pdf_service import PdfRenderCoordinator
 from church_presenter.services.screen_service import MockScreenService
 from church_presenter.services.settings_service import SettingsService
+from church_presenter.services.video_url_service import VideoUrlService
 from church_presenter.ui.controller_window import ControllerWindow
 
 
@@ -136,6 +137,28 @@ def test_video_controls_are_compact_and_beside_library(qtbot, tmp_path: Path) ->
     assert window.settings.fade_duration_ms == 250
 
 
+def test_video_feature_update_button_starts_confirmed_venv_update(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    panel = window.video_panel
+    starts: list[bool] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(panel.feature_updater, "start", lambda: starts.append(True))
+
+    qtbot.mouseClick(panel.feature_update_button, Qt.MouseButton.LeftButton)
+
+    assert starts == [True]
+    assert panel.feature_update_button.text() == "기능 최신화"
+    assert panel.feature_update_button.parentWidget() is panel.control_column
+
+
 def test_video_library_is_always_newest_first(qtbot, tmp_path: Path) -> None:
     older = tmp_path / "older.mp4"
     newer = tmp_path / "newer.mp4"
@@ -154,6 +177,34 @@ def test_video_library_is_always_newest_first(qtbot, tmp_path: Path) -> None:
     assert not hasattr(panel, "descending_check")
     assert panel.file_list.item(0).text().startswith("newer.mp4")
     assert panel.file_list.item(1).text().startswith("older.mp4")
+
+
+def test_video_panel_auto_loads_url_and_uses_local_video_workflow(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    url = "https://youtu.be/abc123"
+    VideoUrlService().save(tmp_path, [url])
+    window, _backends = make_media_controller(qtbot, tmp_path)
+    panel = window.video_panel
+    qtbot.waitUntil(lambda: panel.file_list.count() == 1, timeout=3000)
+
+    item = panel.file_list.item(0)
+    assert item.data(Qt.ItemDataRole.UserRole) == url
+    panel.file_list.setCurrentItem(item)
+    assert panel.selected_source == url
+    assert panel.url_remove_button.isEnabled()
+
+    qtbot.mouseClick(panel.cue_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window.state.broadcast.is_ready, timeout=1000)
+    assert panel.take_button.isEnabled()
+    assert window.state.broadcast.preview_content.video_url == url
+
+    qtbot.mouseClick(panel.take_button, Qt.MouseButton.LeftButton)
+    assert window.state.broadcast.live_content.video_url == url
+    assert panel.play_button.isEnabled()
+    qtbot.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
+    assert panel.manager.runtime(ChannelRole.BROADCAST).status is PlaybackStatus.PLAYING
 
 
 def test_media_tabs_preserve_preview_and_content_heights(qtbot, tmp_path: Path) -> None:

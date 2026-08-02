@@ -134,7 +134,8 @@ class AudioBackendRouter(QObject):
 
     @property
     def path(self) -> Path | None:
-        return self.local_backend.path if self._active is self.local_backend else None
+        source = self.local_backend.path if self._active is self.local_backend else None
+        return source if isinstance(source, Path) else None
 
     def _activate(self, backend: MediaPlaybackBackend | StreamingAudioBackend) -> None:
         previous, self._active = self._active, None

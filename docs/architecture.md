@@ -4,9 +4,9 @@
 
 Phase 2 is a native PySide6 desktop application for one operator, one broadcast
 key/PDF/video output, one venue PDF/video output, and one application-wide
-background-music player. Background music accepts local files and public single-video
-YouTube URLs. YouTube video output, downloads, playlist import, authentication, other
-web streaming, camera capture, OBS, ATEM control, and device-specific mpv routing remain
+background-music player. Video and background music accept local files and public
+single-video YouTube URLs. Downloads, playlist import, authentication, other web
+streaming, camera capture, OBS, ATEM control, and device-specific mpv routing remain
 outside scope.
 
 ## Reference analysis
@@ -35,6 +35,29 @@ source of truth for each channel's preview and live content. Content is an
 immutable value object, so TAKE copies a value rather than a widget or renderer
 reference. UI widgets observe explicit state updates; they are not state stores.
 
+Subtitle production is split into three flat top-level sources. `InstantPanel`
+owns one unplanned text editor and derives n-line cards from its configured group
+size; `SubtitlePanel` owns the sectioned song-JSON praise plan; and `BiblePanel`
+owns an ordered weekly list of semantic Bible ranges. They share one Preview/Live
+state machine rather than separate output modes. Each source has its own style.
+
+The Bible panel is a horizontal split: compact controls stay in a bounded left
+column while the flattened weekly cue list consumes the full height on the right.
+Book, chapter, and verse values use a reusable tile-grid dialog instead of an
+unbounded combo-box menu.
+
+`BibleDocument` is the validated 66-book data model. `BibleRepository` resolves
+book/chapter/verse and inclusive passage ranges without involving Qt. The HTML
+converter removes phrase headings, preserves inseparable combined verse spans,
+and emits schema-versioned JSON. Bible corpus JSON is deliberately gitignored;
+only the model, converter, tests, and format documentation belong to the source
+repository.
+
+Bible `Content` carries the verse body and its book/chapter/verse label as separate
+text fields. `ContentRenderer` measures both, stacks the reference immediately
+above the body, and anchors them as one block using the body position. The
+reference keeps its own font and alignment without duplicating it in body text.
+
 ## State and TAKE transactions
 
 Broadcast and venue have separate `ChannelState` instances. Selecting a subtitle
@@ -58,9 +81,11 @@ the BLACK shutdown fallback or bypasses Preview/TAKE.
 `OutputSurface` is the only content display widget. Controller mirrors,
 simulation windows, and full-screen output windows all embed this widget.
 `SubtitleRenderer` paints normalized style coordinates, outline, shadow,
-background, padding, alignment, and line spacing with QPainter. PDF pages use a
-shared contain calculation and black letterboxing. No simulation-only image or
-renderer exists.
+background, padding, alignment, and line spacing with QPainter. Bible references
+are measured separately but stacked immediately above the body; the combined
+block uses the body position while the reference contributes only font and
+alignment styling. PDF pages use a shared contain calculation and black
+letterboxing. No simulation-only image or renderer exists.
 
 The prepared first video frame is converted once to `QImage` for thumbnails and
 paused Preview. During Live playback, native `QVideoFrame` values are distributed
@@ -79,7 +104,7 @@ frame to an image for the short fade and then clears the native sink.
 
 ## Media playback
 
-`MediaPlaybackBackend` is the replaceable local-media command/signal contract.
+`MediaPlaybackBackend` is the replaceable local-or-network media command/signal contract.
 `QtMediaBackend` contains every `QMediaPlayer`, `QAudioOutput`, and `QVideoSink`
 dependency. `MockMediaBackend` gives tests deterministic frames and playback
 events without codecs or audio devices. A future libmpv video implementation can
@@ -89,10 +114,18 @@ and resolves it for every video and background-music backend. An empty ID keeps
 all audio on the operating system's current default output.
 
 `VideoPlaybackManager` owns independent Broadcast/Venue prepared and Live
-players plus runtime state. Immutable `Content.video(path)` descriptors are
-copied by TAKE; rapidly changing position remains in runtime state. Preview
+players plus runtime state. Immutable `Content.video(path)` and
+`Content.youtube_video(url)` descriptors are copied by TAKE; rapidly changing position
+remains in runtime state. Preview
 decode is muted and stops on its first real frame. Stop, Ended, or fatal Live
 errors emit a channel event that Controller converts to BLACK.
+
+`VideoPanel` scans local files from the selected video folder and appends original URLs
+from its fixed `video_url.json`. `VideoUrlService` atomically saves additions and removals
+without a file chooser. For URL Cue, the Qt video backend asks `YtDlpResolver` for an
+ephemeral progressive stream containing both audio and video, then enters the same
+prepared-frame/TAKE/Play state machine used by a local file. The resolved stream URL is
+kept in memory only; persisted content and presets retain the original YouTube URL.
 
 `AudioPlaybackController` owns the global player and `AudioPlaylist`. It sends every
 transport command through `AudioBackendRouter`; UI code never branches on source type.
@@ -262,16 +295,31 @@ zoom and pan to fit.
 `SettingsService` stores versioned JSON in the platformdirs user config folder.
 It writes a temporary file, fsyncs it, and atomically replaces the target. Invalid
 JSON is renamed with a `.corrupt-<timestamp>` suffix and defaults are returned
-with a non-fatal warning. Subtitle presets use the same policy in a separate JSON
-file. User-edited subtitles remain in memory until Save and are always written
-as UTF-8 without a BOM; blank source lines are intentionally omitted on load and
-save. Opening or reloading a TXT file uses an explicit Yes/No/Cancel decision:
-Yes saves first, No discards memory changes and continues, and Cancel aborts the
-load.
+with a non-fatal warning. Worship-order presets use the same policy in a separate
+schema-v3 JSON file. Each subtitle cue is a `CueReference`: praise stores a semantic
+song-plan entry, section occurrence, and source-line key, while Bible stores a
+semantic book/chapter/verse key.
+Neither rendered text nor Bible corpus data is embedded. Schema v1 snapshot and
+schema v2 position-only worship orders remain readable; new saves use v3.
+
+Weekly Bible citation files are independent schema-v1 documents containing only
+ordered inclusive ranges and a relative Bible source file name. Loading validates
+the complete candidate against the candidate repository before replacing the
+active plan, so a malformed plan cannot partially mutate the UI.
+
+`SongDocument` validates one JSON file per song. Sections are typed as verse,
+chorus, or bridge, and `default_sequence` may repeat section IDs. `SubtitlePanel`
+stores a weekly list of `SongPlanEntry` values and derives cards within each section
+boundary. A cue reference uses the stable plan-entry ID, sequence occurrence, and
+source-line index, so regrouping or reordering does not invalidate worship-order
+presets. Song-plan files store relative song sources and section sequences without
+embedding lyrics. `SongJsonDialog` creates reusable validated song documents from
+the title and section-specific lyric editors; the title is also the generated song
+identity and filename, and the visible section order becomes its default sequence.
 
 ## Shutdown
 
-The Controller first asks about unsaved subtitle edits; folder playlist URL changes are already
+The Controller first asks about unsaved assembled subtitle changes; folder playlist URL changes are already
 saved immediately. It then sets both live
 channels to BLACK, processes pending paint events, closes physical/simulation
 outputs, stops remote capture/server with a bounded thread join, persists

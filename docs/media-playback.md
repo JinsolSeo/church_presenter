@@ -13,7 +13,7 @@
 
 ## Cue / TAKE / Play
 
-파일을 선택한 뒤 `Preview Cue`를 누르면 음소거된 Preview decoder를 시작하고 첫 실제
+로컬 파일 또는 YouTube URL 항목을 선택한 뒤 `Preview Cue`를 누르면 음소거된 Preview decoder를 시작하고 첫 실제
 프레임에서 정지합니다. 파일 선택만으로는 decoder나 Preview를 변경하지 않습니다.
 첫 프레임이 준비되기 전에는 TAKE가 비활성/실패 상태이며 기존 Live가 유지됩니다.
 TAKE는 준비된 decoder를 Live 역할로 바꾸지만 재생하지 않습니다. Play만 실제 재생과
@@ -47,6 +47,20 @@ PLAYING이면 PauseReason을 VIDEO로 기록하고 Pause합니다. 이후 영상
 Ended, Error 또는 모든 영상 종료가 발생해도 음악을 자동 재개하지 않습니다. 운영자가
 직접 Play해야 합니다. 서로 다른 두 영상이 동시에 재생돼도 첫 Play에서만 음악 상태가
 변합니다.
+
+## YouTube 영상 스트리밍
+
+선택한 영상 폴더에 `video_url.json`이 있으면 로컬 영상 뒤에 공개 단일 YouTube URL을
+자동으로 합칩니다. `URL 추가`와 `URL 삭제`는 이 고정 파일을 atomic write하며 파일명을
+따로 묻지 않습니다. URL Cue 시 yt-dlp가 영상과 오디오가 함께 든 progressive 스트림을
+worker에서 해석하고 Qt Multimedia에 전달합니다. 해석된 임시 URL은 메모리에만 두며
+JSON에 저장하거나 다운로드하지 않습니다. 이후 첫 프레임 준비, TAKE, Play/Pause/Stop,
+탐색, 양쪽 Cue와 TAKE BOTH는 로컬 영상과 같은 상태 머신을 사용합니다.
+
+네트워크 영상은 스트림 해석 시간을 포함해 최대 30초 동안 Cue를 기다립니다. 실패하면
+TAKE를 활성화하지 않고 기존 Live를 유지합니다. 공개 단일 영상만 지원하며 playlist,
+로그인, 쿠키, 비공개·연령 제한 영상은 지원하지 않습니다. 외부 서비스 변경과 네트워크
+상태에 따라 실패할 수 있으므로 예배 전에 실제 운영 PC에서 끝까지 검증하십시오.
 
 ## YouTube 오디오 스트리밍
 
@@ -82,9 +96,16 @@ Python 의존성은 `yt-dlp`와 `python-mpv`이며, 후자는 별도 시스템 l
 설치합니다. Windows backend는 `CHURCH_PRESENTER_LIBMPV_DIR`, 실행 파일 위치,
 `libmpv`/`mpv` 하위 폴더와 `PATH` 순서로 DLL을 찾습니다. 패키징 시 DLL 또는 dylib의
 위치와 mpv 라이선스를 별도로 확인해야 합니다. YouTube extractor는 외부 서비스 변경에
-영향을 받으므로 운영 전 `python -m pip install --upgrade yt-dlp`와 실제 URL 재생을
+영향을 받으므로 운영 전 `python -m pip install --upgrade "yt-dlp[default]"`와 실제 URL 재생을
 검증하십시오. 다운로드 기능은 제공하지 않으며, 콘텐츠 이용 조건과 재생 권한은
 사용자가 확인해야 합니다.
+
+영상 탭의 `기능 최신화`는 현재 앱을 실행한 프로젝트 `.venv`의 Python으로
+`yt-dlp[default]`와 `python-mpv`를 업데이트합니다. `yt-dlp[default]`에는 호환되는
+`yt-dlp-ejs`가 포함됩니다. 셸이나 시스템 Python으로 우회하지 않으며 macOS와 Windows에서
+같은 명령 구조를 사용합니다. 실행 중 로드된 모듈은 교체되지 않으므로 완료 후 앱을 다시
+시작해야 합니다. Deno는 Python 패키지가 아니므로 버튼이 설치하지 않으며, 완료 결과에서
+PATH 감지 여부를 안내합니다.
 
 `화면 / 오디오 설정`의 출력 장치는 로컬 음악, 영상과 YouTube 오디오에 함께
 적용합니다. YouTube backend는 Qt 장치의 native ID와 설명을 libmpv 장치 목록에
@@ -95,12 +116,15 @@ Python 의존성은 `yt-dlp`와 `python-mpv`이며, 후자는 별도 시스템 l
 
 - 파일 없음: 파일을 원래 위치로 복구하거나 라이브러리/재생목록에서 다시 선택합니다.
 - 지원하지 않는 코덱: 권장 MP4 H.264/AAC로 다시 인코딩합니다.
-- 첫 프레임 준비 실패: 10초 안에 실제 프레임을 얻지 못한 경우입니다. 다시 Cue하고 파일
-  권한과 손상 여부를 확인한 뒤, 반복되면 권장 MP4 H.264/AAC로 변환합니다. 상세 Qt
-  media/playback 상태와 decoder 오류는 애플리케이션 로그에 기록됩니다.
+- 첫 프레임 준비 실패: 로컬 파일은 10초, YouTube 영상은 30초 안에 실제 프레임을 얻지
+  못한 경우입니다. 다시 Cue하고, 로컬 파일이면 권한·손상·코덱을, YouTube 영상이면
+  네트워크와 공개 상태를 확인합니다. 상세 Qt media/playback 상태와 decoder 오류는
+  애플리케이션 로그에 기록됩니다.
 - 영상은 나오고 소리가 없음: 앱 음소거, 영상 볼륨과 `화면 / 오디오 설정`의 공통
   출력 장치를 확인합니다. 시스템 설정을 따르려면 `시스템 기본 출력`을 선택합니다.
-- YouTube 정보만 나오고 재생되지 않음: 최신 yt-dlp인지 확인하고, Windows에서는
+- YouTube 영상 Cue 실패: 최신 yt-dlp, 네트워크와 영상 공개 상태를 확인합니다. Qt
+  Multimedia가 해당 progressive 스트림을 재생하지 못한 상세 원인은 로그에 남습니다.
+- YouTube 음악 정보만 나오고 재생되지 않음: 최신 yt-dlp인지 확인하고, Windows에서는
   `mpv-2.dll`의 비트 수가 Python과 같은지와 `CHURCH_PRESENTER_LIBMPV_DIR` 또는
   실행 파일 옆 `libmpv` 폴더를 확인합니다. 상세 원인은 애플리케이션 로그에 남습니다.
 - 일부 MKV/MOV/AVI 실패: Windows Media Foundation/Qt FFmpeg backend 및 GPU driver
@@ -112,7 +136,8 @@ Preview는 기존 Live를 바꾸지 않으며 Live 중 치명적 오류만 해�
 
 ## Qt Multimedia 제한과 확장
 
-로컬 영상과 로컬 배경음악 backend는 PySide6 Qt Multimedia입니다. YouTube 오디오는
+로컬/YouTube 영상과 로컬 배경음악 backend는 PySide6 Qt Multimedia입니다. YouTube
+영상은 yt-dlp가 해석한 임시 progressive URL을 Qt에 전달하고, YouTube 오디오는
 yt-dlp + libmpv adapter를 사용합니다. 컨테이너/코덱, 하드웨어 가속,
 탐색 정밀도, 첫 프레임 시간과 종료 이벤트는 OS별로 다를 수 있습니다. backend는
 `MediaPlaybackBackend` 뒤에 격리되어 있습니다. 기존 영상 backend는 libmpv로

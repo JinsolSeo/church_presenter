@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_song",
+  "id": "prayer_confession",
+  "title": "기도의 고백",
+  "artist": "Church Presenter Sample",
+  "sections": [
+    {
+      "id": "verse_1",
+      "type": "verse",
+      "label": "Verse 1",
+      "lines": ["조용히 마음을 열고", "주 앞에 나아갑니다", "숨겨 둔 나의 모든 말", "주님께 내려놓습니다"]
+    },
+    {
+      "id": "verse_2",
+      "type": "verse",
+      "label": "Verse 2",
+      "lines": ["내 뜻보다 주의 뜻을", "오늘도 구하며 걷습니다", "작은 음성 들려올 때", "기쁨으로 순종하겠습니다"]
+    },
+    {
+      "id": "chorus",
+      "type": "chorus",
+      "label": "Chorus",
+      "lines": ["나의 기도 들으시는 주", "가장 좋은 길로 이끄소서", "나의 삶을 온전히 드리니", "주의 마음 품게 하소서"]
+    }
+  ],
+  "default_sequence": ["verse_1", "chorus", "verse_2", "chorus"]
+}

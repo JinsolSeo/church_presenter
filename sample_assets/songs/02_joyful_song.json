@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_song",
+  "id": "joyful_song",
+  "title": "기쁨의 노래",
+  "artist": "Church Presenter Sample",
+  "sections": [
+    {
+      "id": "verse_1",
+      "type": "verse",
+      "label": "Verse 1",
+      "lines": ["우리 함께 손을 들고", "기쁨의 노래를 부르자", "모든 마음 하나 되어", "감사의 고백을 드리자"]
+    },
+    {
+      "id": "chorus",
+      "type": "chorus",
+      "label": "Chorus",
+      "lines": ["기뻐 노래해 크게 외치세", "우리의 소망 되신 주", "온 세상 가득 울려 퍼지게", "사랑의 노래 부르자"]
+    },
+    {
+      "id": "bridge",
+      "type": "bridge",
+      "label": "Bridge",
+      "lines": ["하늘과 땅이 함께", "주의 선하심을 노래해", "오늘과 영원까지", "우리의 찬양 이어지리"]
+    }
+  ],
+  "default_sequence": ["verse_1", "chorus", "bridge", "chorus"]
+}

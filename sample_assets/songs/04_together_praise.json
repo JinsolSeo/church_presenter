@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_song",
+  "id": "together_praise",
+  "title": "함께하는 찬양",
+  "artist": "Church Presenter Sample",
+  "sections": [
+    {
+      "id": "verse_1",
+      "type": "verse",
+      "label": "Verse 1",
+      "lines": ["서로 다른 우리의 목소리", "한 노래 되어 울려 퍼지네", "사랑으로 이어진 마음", "주 안에서 하나 되네"]
+    },
+    {
+      "id": "chorus",
+      "type": "chorus",
+      "label": "Chorus",
+      "lines": ["함께 찬양해 함께 걸어가", "기쁨과 눈물 모두 나누며", "우리의 삶이 노래가 되어", "주의 사랑 전하게 하소서"]
+    },
+    {
+      "id": "bridge",
+      "type": "bridge",
+      "label": "Bridge",
+      "lines": ["세대를 넘어 이어지는 믿음", "한마음으로 주를 바라보네"]
+    }
+  ],
+  "default_sequence": ["verse_1", "chorus", "bridge", "chorus"]
+}

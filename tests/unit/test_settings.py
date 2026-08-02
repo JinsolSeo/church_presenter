@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from church_presenter.domain.enums import ContentType, RepeatMode, SortField
 from church_presenter.domain.models import AppSettings, Content, PreviewPreset, SubtitleStyle
 from church_presenter.services.settings_service import SettingsService
@@ -55,6 +57,28 @@ def test_legacy_settings_without_theme_uses_default(tmp_path: Path) -> None:
 
     assert result.warning == ""
     assert result.settings.current_theme == "light_professional"
+
+
+def test_legacy_key_color_seeds_all_new_subtitle_sources(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    service.settings_path.write_text('{"key_color": "#123456"}', encoding="utf-8")
+
+    settings = service.load().settings
+
+    assert settings.instant_text_key_color == "#123456"
+    assert settings.praise_key_color == "#123456"
+    assert settings.bible_key_color == "#123456"
+
+
+def test_invalid_instant_text_group_size_falls_back_to_one(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    service.settings_path.write_text('{"instant_text_group_size": 0}', encoding="utf-8")
+
+    settings = service.load().settings
+
+    assert settings.instant_text_group_size == 1
 
 
 def test_corrupt_settings_are_backed_up(tmp_path: Path) -> None:
@@ -143,9 +167,7 @@ def test_worship_order_can_be_saved_and_loaded_as_a_file(tmp_path: Path) -> None
     assert service.load_preview_preset_file(path) == [
         preset.as_file_independent() for preset in presets
     ]
-    assert '"document_type": "church_presenter_worship_order"' in path.read_text(
-        encoding="utf-8"
-    )
+    assert '"document_type": "church_presenter_worship_order"' in path.read_text(encoding="utf-8")
     payload = path.read_text(encoding="utf-8")
     assert str(tmp_path) not in payload
     assert "찬양합니다." not in payload
@@ -176,3 +198,50 @@ def test_legacy_worship_order_is_migrated_to_positions(tmp_path: Path) -> None:
             Content(kind=ContentType.PDF_PAGE, pdf_page=7),
         )
     ]
+
+
+def test_worship_order_v3_preserves_semantic_subtitle_reference(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path / "settings")
+    path = tmp_path / "order.json"
+    preset = PreviewPreset(
+        "성경 봉독",
+        Content.subtitle(
+            "본문",
+            4,
+            SubtitleStyle(),
+            "#00FF00",
+            source="bible",
+            reference="JHN.3.16",
+        ),
+        Content.black(),
+    )
+
+    service.save_preview_preset_file(path, [preset])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    loaded = service.load_preview_preset_file(path)
+
+    assert payload["version"] == 3
+    assert payload["presets"][0]["broadcast"]["source"] == "bible"
+    assert payload["presets"][0]["broadcast"]["reference"] == "JHN.3.16"
+    assert loaded[0].broadcast_content.subtitle_reference == "JHN.3.16"
+
+
+def test_future_worship_order_version_is_rejected(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path / "settings")
+    path = tmp_path / "future.json"
+    path.write_text('{"version": 99, "presets": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported worship-order version"):
+        service.load_preview_preset_file(path)
+
+
+def test_another_json_document_cannot_be_opened_as_worship_order(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path / "settings")
+    path = tmp_path / "bible-plan.json"
+    path.write_text(
+        '{"document_type": "church_presenter_bible_plan", "schema_version": 1}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="worship-order"):
+        service.load_preview_preset_file(path)

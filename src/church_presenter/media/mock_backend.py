@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor, QImage
 
 from church_presenter.domain.enums import PlaybackStatus
 from church_presenter.media.audio_backend import StreamingAudioBackend
-from church_presenter.media.base import MediaPlaybackBackend
+from church_presenter.media.base import MediaPlaybackBackend, MediaSource
 
 
 class MockMediaBackend(MediaPlaybackBackend):
@@ -27,15 +27,17 @@ class MockMediaBackend(MediaPlaybackBackend):
         self.volume = 1.0
         self.muted = False
         self.audio_output_device_id = ""
-        self._path: Path | None = None
+        self._path: MediaSource | None = None
         self._status = PlaybackStatus.UNLOADED
         self.fail_paths: set[Path] = set()
         self.closed = False
 
-    def load(self, path: Path) -> None:
-        resolved = path.resolve()
+    def load(self, path: MediaSource) -> None:
+        resolved: MediaSource = path.resolve() if isinstance(path, Path) else path
         self._path = resolved
-        if resolved in self.fail_paths or not resolved.is_file():
+        if isinstance(resolved, Path) and (
+            resolved in self.fail_paths or not resolved.is_file()
+        ):
             self._set_status(PlaybackStatus.ERROR)
             self.error_occurred.emit("Mock backend could not load media.")
             return
@@ -85,7 +87,7 @@ class MockMediaBackend(MediaPlaybackBackend):
         return self._status
 
     @property
-    def path(self) -> Path | None:
+    def path(self) -> MediaSource | None:
         return self._path
 
     def finish(self) -> None:

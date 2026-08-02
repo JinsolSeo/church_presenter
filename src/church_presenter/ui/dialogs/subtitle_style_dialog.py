@@ -42,9 +42,13 @@ class SubtitleStyleDialog(QDialog):
         current_preset: str,
         group_size: int = 2,
         parent: QWidget | None = None,
+        preview_text: str | None = None,
+        reference_mode: bool = False,
+        group_label: str = "한 번에 표시할 자막 수",
+        body_style: SubtitleStyle | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Subtitle Style Settings")
+        self.setWindowTitle("구절 정보 스타일" if reference_mode else "자막 스타일 설정")
         self.resize(860, 800)
         self.settings_service = settings_service
         self.presets, self.default_preset, warning = settings_service.load_presets()
@@ -52,6 +56,9 @@ class SubtitleStyleDialog(QDialog):
         self.result_key_color = key_color
         self.result_preset = current_preset
         self.result_group_size = group_size
+        self.preview_text = preview_text or "주님의 이름으로 환영합니다.\n함께 예배드리겠습니다."
+        self.reference_mode = reference_mode
+        self.body_style = body_style or SubtitleStyle()
         root = QVBoxLayout(self)
         if warning:
             warning_label = QLabel(warning)
@@ -111,7 +118,7 @@ class SubtitleStyleDialog(QDialog):
         self.group_size.setRange(1, 8)
         self.group_size.setValue(group_size)
         rows: tuple[tuple[str, QWidget], ...] = (
-            ("한 번에 표시할 자막 수", self.group_size),
+            (group_label, self.group_size),
             ("글꼴", self.font_combo),
             ("글자 크기", self.font_size),
             ("글자 색상", self.text_color),
@@ -134,6 +141,15 @@ class SubtitleStyleDialog(QDialog):
             ("수직 앵커", self.vertical_anchor),
             ("Key Color", self.key_color),
         )
+        if reference_mode:
+            visible_labels = {
+                "글꼴",
+                "글자 크기",
+                "글자 색상",
+                "굵게",
+                "정렬",
+            }
+            rows = tuple(row for row in rows if row[0] in visible_labels)
         for label, form_widget in rows:
             form.addRow(label, form_widget)
         scroll.setWidget(form_host)
@@ -145,14 +161,7 @@ class SubtitleStyleDialog(QDialog):
         root.addWidget(self.warning)
         self.preview = OutputSurface(coordinator)
         root.addWidget(AspectRatioContainer(self.preview), 1)
-        self.preview.set_content(
-            Content.subtitle(
-                "주님의 이름으로 환영합니다.\n함께 예배드리겠습니다.",
-                0,
-                style,
-                key_color,
-            )
-        )
+        self.preview.set_content(self._preview_content(style, key_color))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Apply
@@ -256,9 +265,19 @@ class SubtitleStyleDialog(QDialog):
         self.warning.setText(
             "Key Color와 너무 유사한 색상: " + ", ".join(conflicts) if conflicts else ""
         )
-        self.preview.set_content(
-            Content.subtitle("주님의 이름으로 환영합니다.\n함께 예배드리겠습니다.", 0, style, key)
-        )
+        self.preview.set_content(self._preview_content(style, key))
+
+    def _preview_content(self, style: SubtitleStyle, key: str) -> Content:
+        if self.reference_mode:
+            return Content.subtitle(
+                "태초에 하나님이 천지를 창조하시니라",
+                0,
+                self.body_style,
+                key,
+                label=self.preview_text,
+                label_style=style,
+            )
+        return Content.subtitle(self.preview_text, 0, style, key)
 
     def _load(self) -> None:
         name = self.preset_combo.currentData()

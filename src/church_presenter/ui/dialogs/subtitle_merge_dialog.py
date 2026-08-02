@@ -39,7 +39,7 @@ class SubtitleMergeDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("자막 합치기")
+        self.setWindowTitle("자막 생성")
         self.resize(820, 560)
         self.folder = initial_folder
         self.result_path: Path | None = None
@@ -253,7 +253,7 @@ class SubtitleMergeDialog(QDialog):
     def _save(self) -> None:
         paths = self._selected_paths()
         if not paths:
-            QMessageBox.warning(self, "자막 합치기", "합칠 자막 파일을 선택하십시오.")
+            QMessageBox.warning(self, "자막 생성", "합칠 자막 파일을 선택하십시오.")
             return
         suggested = (self.folder or Path.home()) / "merged_subtitles.txt"
         selected, _ = QFileDialog.getSaveFileName(
@@ -278,7 +278,7 @@ class SubtitleMergeDialog(QDialog):
             return
         QMessageBox.information(
             self,
-            "자막 합치기",
+            "자막 생성",
             f"합친 자막을 저장했습니다.\n{self.result_path}",
         )
         self.accept()

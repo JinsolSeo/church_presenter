@@ -63,6 +63,21 @@ class SubtitleStyle:
         return cls(**values)
 
 
+def default_bible_reference_style() -> SubtitleStyle:
+    """Return the compact font style stacked above Bible body text."""
+    return SubtitleStyle(
+        font_size=34,
+        background_opacity=0.35,
+        background_padding=12,
+        x_ratio=0.06,
+        y_ratio=0.07,
+        max_width_ratio=0.88,
+        alignment=TextAlignment.LEFT,
+        horizontal_anchor=HorizontalAnchor.LEFT,
+        vertical_anchor=VerticalAnchor.TOP,
+    )
+
+
 def field_list(model: type[Any]) -> tuple[Any, ...]:
     """Return dataclass fields without exposing dataclasses internals elsewhere."""
     return tuple(model.__dataclass_fields__.values())
@@ -78,9 +93,14 @@ class Content:
     pdf_path: Path | None = None
     pdf_page: int | None = None
     video_path: Path | None = None
+    video_url: str = ""
     subtitle_style: SubtitleStyle = field(default_factory=SubtitleStyle)
     key_color: str = "#00FF00"
     background_color: str = "#000000"
+    subtitle_source: str = ""
+    subtitle_reference: str = ""
+    subtitle_label: str = ""
+    subtitle_label_style: SubtitleStyle = field(default_factory=default_bible_reference_style)
 
     @classmethod
     def black(cls) -> Content:
@@ -107,6 +127,10 @@ class Content:
         card_index: int,
         style: SubtitleStyle,
         key_color: str,
+        source: str = "",
+        reference: str = "",
+        label: str = "",
+        label_style: SubtitleStyle | None = None,
     ) -> Content:
         return cls(
             ContentType.SUBTITLE_KEY,
@@ -114,6 +138,10 @@ class Content:
             subtitle_card_index=card_index,
             subtitle_style=style,
             key_color=key_color,
+            subtitle_source=source,
+            subtitle_reference=reference,
+            subtitle_label=label,
+            subtitle_label_style=label_style or default_bible_reference_style(),
         )
 
     @classmethod
@@ -125,6 +153,22 @@ class Content:
         """Create a cueable local-video descriptor."""
         return cls(ContentType.VIDEO, video_path=path.expanduser().resolve())
 
+    @classmethod
+    def youtube_video(cls, url: str) -> Content:
+        """Create a cueable YouTube-video descriptor without persisting stream URLs."""
+        cleaned = url.strip()
+        if not cleaned:
+            raise ValueError("video URL cannot be blank")
+        return cls(ContentType.VIDEO, video_url=cleaned)
+
+    @property
+    def video_source(self) -> Path | str | None:
+        return self.video_url or self.video_path
+
+    @property
+    def video_source_key(self) -> str:
+        return str(self.video_source or "")
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible content snapshot."""
         return {
@@ -134,9 +178,14 @@ class Content:
             "pdf_path": str(self.pdf_path) if self.pdf_path is not None else None,
             "pdf_page": self.pdf_page,
             "video_path": str(self.video_path) if self.video_path is not None else None,
+            "video_url": self.video_url,
             "subtitle_style": self.subtitle_style.to_dict(),
             "key_color": self.key_color,
             "background_color": self.background_color,
+            "subtitle_source": self.subtitle_source,
+            "subtitle_reference": self.subtitle_reference,
+            "subtitle_label": self.subtitle_label,
+            "subtitle_label_style": self.subtitle_label_style.to_dict(),
         }
 
     @classmethod
@@ -146,8 +195,12 @@ class Content:
         style_data = data.get("subtitle_style", {})
         if not isinstance(style_data, dict):
             raise TypeError("subtitle_style must be an object")
+        label_style_data = data.get("subtitle_label_style", {})
+        if not isinstance(label_style_data, dict):
+            raise TypeError("subtitle_label_style must be an object")
         pdf_path = data.get("pdf_path")
         video_path = data.get("video_path")
+        video_url = data.get("video_url", "")
         return cls(
             kind=kind,
             text=str(data.get("text", "")),
@@ -155,9 +208,18 @@ class Content:
             pdf_path=Path(pdf_path) if isinstance(pdf_path, str) and pdf_path else None,
             pdf_page=_optional_int(data.get("pdf_page")),
             video_path=Path(video_path) if isinstance(video_path, str) and video_path else None,
+            video_url=str(video_url) if isinstance(video_url, str) else "",
             subtitle_style=SubtitleStyle.from_dict(style_data),
             key_color=str(data.get("key_color", "#00FF00")),
             background_color=str(data.get("background_color", "#000000")),
+            subtitle_source=str(data.get("subtitle_source", "")),
+            subtitle_reference=str(data.get("subtitle_reference", "")),
+            subtitle_label=str(data.get("subtitle_label", "")),
+            subtitle_label_style=(
+                SubtitleStyle.from_dict(label_style_data)
+                if label_style_data
+                else default_bible_reference_style()
+            ),
         )
 
     def as_preset_reference(self) -> Content:
@@ -166,6 +228,8 @@ class Content:
             return Content(
                 kind=self.kind,
                 subtitle_card_index=self.subtitle_card_index,
+                subtitle_source=self.subtitle_source,
+                subtitle_reference=self.subtitle_reference,
             )
         if self.kind is ContentType.PDF_PAGE:
             return Content(kind=self.kind, pdf_page=self.pdf_page)
@@ -180,6 +244,10 @@ class Content:
         data: dict[str, Any] = {"kind": self.kind.value}
         if self.kind is ContentType.SUBTITLE_KEY:
             data["position"] = self.subtitle_card_index
+            if self.subtitle_source:
+                data["source"] = self.subtitle_source
+            if self.subtitle_reference:
+                data["reference"] = self.subtitle_reference
         elif self.kind is ContentType.PDF_PAGE:
             data["position"] = self.pdf_page
         elif self.kind is ContentType.SOLID_COLOR:
@@ -189,17 +257,74 @@ class Content:
     @classmethod
     def from_preset_dict(cls, data: dict[str, Any]) -> Content:
         """Restore a file-independent worship-order cue."""
+        return CueReference.from_dict(data).to_content()
+
+
+@dataclass(frozen=True, slots=True)
+class CueReference:
+    """Persisted semantic pointer resolved into an immutable Content snapshot."""
+
+    kind: ContentType
+    position: int | None = None
+    source: str = ""
+    reference: str = ""
+    color: str = "#000000"
+
+    @classmethod
+    def from_content(cls, content: Content) -> CueReference:
+        position = None
+        if content.kind is ContentType.SUBTITLE_KEY:
+            position = content.subtitle_card_index
+        elif content.kind is ContentType.PDF_PAGE:
+            position = content.pdf_page
+        return cls(
+            kind=content.kind,
+            position=position,
+            source=content.subtitle_source,
+            reference=content.subtitle_reference,
+            color=content.background_color,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"kind": self.kind.value}
+        if self.kind in {ContentType.SUBTITLE_KEY, ContentType.PDF_PAGE}:
+            data["position"] = self.position
+        if self.kind is ContentType.SUBTITLE_KEY:
+            if self.source:
+                data["source"] = self.source
+            if self.reference:
+                data["reference"] = self.reference
+        if self.kind is ContentType.SOLID_COLOR:
+            data["color"] = self.color
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CueReference:
         kind = ContentType(str(data["kind"]))
         position = _optional_int(data.get("position"))
-        if kind is ContentType.SUBTITLE_KEY:
-            return cls(kind=kind, subtitle_card_index=position)
-        if kind is ContentType.PDF_PAGE:
-            return cls(kind=kind, pdf_page=position)
-        if kind is ContentType.VIDEO:
-            return cls(kind=kind)
-        if kind is ContentType.SOLID_COLOR:
-            return cls.solid_color(str(data.get("color", "#00FF00")))
-        return cls.black()
+        return cls(
+            kind=kind,
+            position=position,
+            source=str(data.get("source", "")),
+            reference=str(data.get("reference", "")),
+            color=str(data.get("color", "#000000")),
+        )
+
+    def to_content(self) -> Content:
+        if self.kind is ContentType.SUBTITLE_KEY:
+            return Content(
+                kind=self.kind,
+                subtitle_card_index=self.position,
+                subtitle_source=self.source,
+                subtitle_reference=self.reference,
+            )
+        if self.kind is ContentType.PDF_PAGE:
+            return Content(kind=self.kind, pdf_page=self.position)
+        if self.kind is ContentType.VIDEO:
+            return Content(kind=self.kind)
+        if self.kind is ContentType.SOLID_COLOR:
+            return Content.solid_color(self.color)
+        return Content.black()
 
 
 def _optional_int(value: Any) -> int | None:
@@ -259,24 +384,24 @@ class PreviewPreset:
         )
 
     def to_preset_dict(self) -> dict[str, Any]:
-        """Return the version-2 worship-order representation."""
+        """Return the version-3 worship-order representation."""
         return {
             "name": self.name,
-            "broadcast": self.broadcast_content.to_preset_dict(),
-            "venue": self.venue_content.to_preset_dict(),
+            "broadcast": CueReference.from_content(self.broadcast_content).to_dict(),
+            "venue": CueReference.from_content(self.venue_content).to_dict(),
         }
 
     @classmethod
     def from_preset_dict(cls, data: dict[str, Any]) -> PreviewPreset:
-        """Restore a version-2 file-independent worship-order preset."""
+        """Restore a version-2/3 file-independent worship-order preset."""
         broadcast = data.get("broadcast")
         venue = data.get("venue")
         if not isinstance(broadcast, dict) or not isinstance(venue, dict):
             raise TypeError("preset cues must be objects")
         return cls(
             name=str(data["name"]),
-            broadcast_content=Content.from_preset_dict(broadcast),
-            venue_content=Content.from_preset_dict(venue),
+            broadcast_content=CueReference.from_dict(broadcast).to_content(),
+            venue_content=CueReference.from_dict(venue).to_content(),
         )
 
 
@@ -357,7 +482,7 @@ class MediaFileItem(FileItem):
 class VideoPlaybackRuntimeState:
     """Mutable playback facts kept separate from immutable content."""
 
-    path: Path | None = None
+    path: Path | str | None = None
     status: PlaybackStatus = PlaybackStatus.UNLOADED
     position_ms: int = 0
     duration_ms: int = 0
@@ -575,12 +700,14 @@ class AppSettings:
     simulation_broadcast_connected: bool = True
     simulation_venue_connected: bool = True
     controller_geometry: str = ""
-    panel_layout: str = "tabs:0"
+    panel_layout: str = "tab:instant"
     workspace_splitter_state: str = ""
     current_theme: str = "light_professional"
     preview_preset_file: str = ""
     last_subtitle_file: str = ""
     subtitle_group_size: int = 2
+    song_folder: str = ""
+    last_praise_plan_file: str = ""
     last_pdf_file: str = ""
     last_pdf_page: int = 0
     pdf_page_orders: dict[str, list[int]] = field(default_factory=dict)
@@ -589,6 +716,17 @@ class AppSettings:
     linked_navigation_auto_take: bool = False
     current_style_preset: str = "Lower Third"
     key_color: str = "#00FF00"
+    instant_text_style: dict[str, Any] = field(default_factory=dict)
+    instant_text_group_size: int = 1
+    praise_style: dict[str, Any] = field(default_factory=dict)
+    bible_style: dict[str, Any] = field(default_factory=dict)
+    bible_reference_style: dict[str, Any] = field(default_factory=dict)
+    instant_text_key_color: str = "#00FF00"
+    praise_key_color: str = "#00FF00"
+    bible_key_color: str = "#00FF00"
+    bible_file: str = ""
+    last_bible_plan_file: str = ""
+    bible_group_size: int = 1
     fade_duration_ms: int = 250
     video_volume: int = 80
     music_volume: int = 70
@@ -609,6 +747,30 @@ class AppSettings:
     def from_dict(cls, data: dict[str, Any]) -> AppSettings:
         valid = {item.name for item in field_list(cls)}
         values = {key: value for key, value in data.items() if key in valid}
+        legacy_key_color = str(values.get("key_color", "#00FF00"))
+        for key in (
+            "instant_text_key_color",
+            "praise_key_color",
+            "bible_key_color",
+        ):
+            if key not in data:
+                values[key] = legacy_key_color
+            elif not isinstance(values.get(key), str):
+                raise TypeError(f"{key} must be a string")
+        for key in (
+            "instant_text_style",
+            "praise_style",
+            "bible_style",
+            "bible_reference_style",
+        ):
+            style_data = values.get(key, {})
+            if not isinstance(style_data, dict):
+                raise TypeError(f"{key} must be an object")
+            SubtitleStyle.from_dict(style_data)
+        for key in ("instant_text_group_size", "bible_group_size"):
+            group_size = values.get(key, 1)
+            if isinstance(group_size, bool) or not isinstance(group_size, int) or group_size < 1:
+                values[key] = 1
         if "sort_field" in values:
             values["sort_field"] = SortField(values["sort_field"])
         for key in ("video_sort_field", "audio_sort_field"):
