@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -57,6 +58,7 @@ class BiblePanel(QWidget):
         self._flat: list[tuple[tuple[BibleReference, BibleVerse], ...]] = []
         self.preview_index = -1
         self.live_index = -1
+        self._group_header_color = QColor(Qt.GlobalColor.black)
 
         layout = QHBoxLayout(self)
         controls_host = QWidget()
@@ -201,6 +203,20 @@ class BiblePanel(QWidget):
         self.key_color = key_color
         if refresh_preview:
             self._emit_preview()
+
+    def set_group_header_color(self, color: str) -> None:
+        self._group_header_color = QColor(color)
+        for row in range(self.plan_list.count()):
+            item = self.plan_list.item(row)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data and data[0] == "range":
+                self._style_group_header(item)
+
+    def _style_group_header(self, item: QListWidgetItem) -> None:
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setForeground(self._group_header_color)
 
     def set_repository(self, repository: BibleRepository, path: Path) -> None:
         for passage in self.ranges:
@@ -426,6 +442,7 @@ class BiblePanel(QWidget):
                 )
                 header.setData(Qt.ItemDataRole.UserRole, ("range", range_index))
                 header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                self._style_group_header(header)
                 self.plan_list.addItem(header)
                 for cue in self._group_passage(self.repository.passage(passage)):
                     flat_index = len(self._flat)

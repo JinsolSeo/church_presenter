@@ -794,12 +794,15 @@ class ControllerWindow(QMainWindow):
 
     def _apply_subtitle_card_theme(self) -> None:
         """Keep item-level brushes aligned with the active JSON theme."""
+        accent = str(self.theme_manager.current_value("colors", "accent"))
         self.subtitle_panel.set_card_theme(
             live_background=str(self.theme_manager.current_value("colors", "live")),
-            preview_background=str(self.theme_manager.current_value("colors", "accent")),
+            preview_background=accent,
             text=str(self.theme_manager.current_value("colors", "text_primary")),
             active_text=str(self.theme_manager.current_value("colors", "text_on_accent")),
         )
+        self.subtitle_panel.set_group_header_color(accent)
+        self.bible_panel.set_group_header_color(accent)
 
     def _apply_audio_playlist_theme(self) -> None:
         """Keep the current-track brush aligned with the active JSON theme."""

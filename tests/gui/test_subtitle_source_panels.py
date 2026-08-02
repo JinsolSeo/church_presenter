@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from church_presenter.domain.bible import (
@@ -82,6 +82,40 @@ def test_flat_source_tabs_are_concise_and_default_to_instant(qtbot, tmp_path: Pa
     assert not hasattr(window.instant_panel, "subtabs")
     assert not hasattr(window.instant_panel, "praise_edit")
     assert not hasattr(window.instant_panel, "book_combo")
+
+
+def test_praise_song_headers_follow_active_theme(qtbot, tmp_path: Path) -> None:
+    window = _window(qtbot, tmp_path)
+    panel = window.subtitle_panel
+    assert panel.load_song_paths([SAMPLE_SONG])
+    panel.add_selected_sections()
+    panel.is_modified = False
+
+    window.theme_combo.setCurrentIndex(window.theme_combo.findData("dark_modern"))
+
+    header = panel.plan_list.item(0)
+    assert header.data(Qt.ItemDataRole.UserRole) == ("entry", 0)
+    assert header.foreground().color() == QColor(
+        str(window.theme_manager.current_value("colors", "accent"))
+    )
+    assert header.font().bold()
+    assert not bool(header.flags() & Qt.ItemFlag.ItemIsSelectable)
+
+
+def test_bible_range_headers_follow_active_theme(qtbot, tmp_path: Path) -> None:
+    window = _window(qtbot, tmp_path)
+    panel = window.bible_panel
+    qtbot.mouseClick(panel.add_after_button, Qt.MouseButton.LeftButton)
+
+    window.theme_combo.setCurrentIndex(window.theme_combo.findData("dark_modern"))
+
+    header = panel.plan_list.item(0)
+    assert header.data(Qt.ItemDataRole.UserRole) == ("range", 0)
+    assert header.foreground().color() == QColor(
+        str(window.theme_manager.current_value("colors", "accent"))
+    )
+    assert header.font().bold()
+    assert not bool(header.flags() & Qt.ItemFlag.ItemIsSelectable)
 
 
 def test_tile_picker_uses_grids_for_books_and_numbers(qtbot) -> None:

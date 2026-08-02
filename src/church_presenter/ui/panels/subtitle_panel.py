@@ -61,6 +61,7 @@ class SubtitlePanel(QWidget):
         self._card_preview_background = QColor(Qt.GlobalColor.darkCyan)
         self._card_text = QColor(Qt.GlobalColor.black)
         self._card_active_text = QColor(Qt.GlobalColor.white)
+        self._group_header_color = QColor(Qt.GlobalColor.black)
 
         layout = QHBoxLayout(self)
         controls_host = QWidget()
@@ -179,6 +180,20 @@ class SubtitlePanel(QWidget):
         self._card_text = QColor(text)
         self._card_active_text = QColor(active_text)
         self._refresh_labels()
+
+    def set_group_header_color(self, color: str) -> None:
+        self._group_header_color = QColor(color)
+        for row in range(self.plan_list.count()):
+            item = self.plan_list.item(row)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data and data[0] == "entry":
+                self._style_group_header(item)
+
+    def _style_group_header(self, item: QListWidgetItem) -> None:
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setForeground(self._group_header_color)
 
     def set_style(
         self,
@@ -369,6 +384,7 @@ class SubtitlePanel(QWidget):
             header = QListWidgetItem(f"{entry.song.title} · {sequence_labels}")
             header.setData(Qt.ItemDataRole.UserRole, ("entry", entry_index))
             header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self._style_group_header(header)
             self.plan_list.addItem(header)
             for occurrence, section_id in enumerate(entry.sequence):
                 section = entry.song.section(section_id)
