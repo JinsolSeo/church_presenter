@@ -782,6 +782,33 @@ def test_close_turns_all_channels_black(qtbot, tmp_path: Path) -> None:
     assert window.state.venue.live_content.kind is ContentType.BLACK
 
 
+def test_close_bypasses_broadcast_chroma_override_for_safety_black(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    window.sync_chroma_check.setChecked(True)
+    assert window.start_outputs()
+    simulator = window.broadcast_simulator
+    assert simulator is not None
+    content_before_safe_close: list[Content] = []
+    original_safe_close = simulator.safe_close
+
+    def record_safe_close() -> None:
+        content_before_safe_close.append(simulator.surface.target_content)
+        original_safe_close()
+
+    monkeypatch.setattr(simulator, "safe_close", record_safe_close)
+
+    window.close()
+
+    assert content_before_safe_close == [Content.black()]
+    assert not window.sync_chroma_check.isChecked()
+    assert window.state.broadcast.live_content.kind is ContentType.BLACK
+    assert window.state.venue.live_content.kind is ContentType.BLACK
+
+
 def test_linked_navigation_advances_subtitle_and_venue_pdf(qtbot, tmp_path: Path) -> None:
     path = tmp_path / "linked.pdf"
     create_pdf(path)

@@ -2513,6 +2513,9 @@ class ControllerWindow(QMainWindow):
             return
         self._closing = True
         try:
+            chroma_signals_blocked = self.sync_chroma_check.blockSignals(True)
+            self.sync_chroma_check.setChecked(False)
+            self.sync_chroma_check.blockSignals(chroma_signals_blocked)
             self.state.black_all()
             self._refresh_all()
             self._push_live(ChannelRole.BROADCAST)
