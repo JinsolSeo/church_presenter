@@ -55,7 +55,7 @@ from church_presenter.remote.network_service import RemoteNetworkService
 from church_presenter.rendering.output_surface import AspectRatioContainer, OutputSurface
 from church_presenter.services.audio_device_service import AudioDeviceService
 from church_presenter.services.bible_service import BibleRepository
-from church_presenter.services.pdf_service import PdfRenderCoordinator
+from church_presenter.services.pdf_service import PdfRenderCoordinator, pdf_page_count
 from church_presenter.services.screen_service import ScreenService, validate_role_assignment
 from church_presenter.services.settings_service import SettingsService
 from church_presenter.services.transition_service import FIXED_OUTPUT_FADE_DURATION_MS
@@ -1089,7 +1089,15 @@ class ControllerWindow(QMainWindow):
             None,
         )
         if pdf_position is not None:
-            self.pdf_panel.set_preview_position(pdf_position)
+            pdf_content = next(
+                content for content in contents.values() if content.kind is ContentType.PDF_PAGE
+            )
+            if (
+                pdf_content.pdf_path is not None
+                and self.pdf_panel.current_path is not None
+                and pdf_content.pdf_path.resolve() == self.pdf_panel.current_path.resolve()
+            ):
+                self.pdf_panel.set_preview_position(pdf_position)
         for role, content in contents.items():
             old_request = self._preview_preset_pdf_requests.pop(role, None)
             if old_request is not None:
@@ -1328,12 +1336,20 @@ class ControllerWindow(QMainWindow):
         self,
         preset: PreviewPreset,
     ) -> tuple[dict[ChannelRole, Content] | None, str]:
-        """Resolve saved positions against the documents currently open in the UI."""
+        """Resolve saved sources, falling back to the active source when unavailable."""
         resolved: dict[ChannelRole, Content] = {}
-        for role, cue in (
+        cue_rows = (
             (ChannelRole.BROADCAST, preset.broadcast_content),
             (ChannelRole.VENUE, preset.venue_content),
-        ):
+        )
+        # A subtitle plan load changes panel navigation state. Validate the other
+        # channel's file/page first so a later PDF/video error cannot partially
+        # apply the preset to either Preview.
+        ordered_rows = sorted(
+            cue_rows,
+            key=lambda row: row[1].kind is ContentType.SUBTITLE_KEY,
+        )
+        for role, cue in ordered_rows:
             label = channel_label(role)
             if cue.kind is ContentType.BLACK:
                 resolved[role] = Content.black()
@@ -1344,6 +1360,15 @@ class ControllerWindow(QMainWindow):
             if cue.kind is ContentType.SUBTITLE_KEY:
                 position = cue.subtitle_card_index
                 if cue.subtitle_source == "bible":
+                    plan_path = self._available_source_path(
+                        cue.subtitle_path,
+                        self.bible_panel.plan_path,
+                    )
+                    if plan_path is not None and (
+                        self.bible_panel.plan_path is None
+                        or self.bible_panel.plan_path.resolve() != plan_path
+                    ) and not self.bible_panel.load_plan_path(plan_path):
+                        return None, f"{label} 성경 콘티를 열 수 없습니다."
                     try:
                         resolved[role] = self.bible_panel.content_for_reference(
                             cue.subtitle_reference
@@ -1352,6 +1377,15 @@ class ControllerWindow(QMainWindow):
                         return None, f"{label} 성경 구절을 확인할 수 없습니다: {error}"
                     continue
                 if cue.subtitle_source == "praise" and cue.subtitle_reference:
+                    plan_path = self._available_source_path(
+                        cue.subtitle_path,
+                        self.subtitle_panel.plan_path,
+                    )
+                    if plan_path is not None and (
+                        self.subtitle_panel.plan_path is None
+                        or self.subtitle_panel.plan_path.resolve() != plan_path
+                    ) and not self.subtitle_panel.load_plan_path(plan_path, warn=False):
+                        return None, f"{label} 찬양 콘티를 열 수 없습니다."
                     try:
                         resolved[role] = self.subtitle_panel.content_for_reference(
                             cue.subtitle_reference
@@ -1368,17 +1402,33 @@ class ControllerWindow(QMainWindow):
                 continue
             if cue.kind is ContentType.PDF_PAGE:
                 position = cue.pdf_page
-                path = self.pdf_panel.current_path
-                if path is None or not path.is_file():
+                path = self._available_source_path(cue.pdf_path, self.pdf_panel.current_path)
+                if path is None:
                     return None, f"{label}에 사용할 PDF를 먼저 선택하십시오."
-                if position is None or not 0 <= position < self.pdf_panel.page_count:
+                try:
+                    page_count = pdf_page_count(path)
+                except Exception as error:
+                    return None, f"{label} PDF를 열 수 없습니다: {error}"
+                if position is None or not 0 <= position < page_count:
                     return None, (
-                        f"{label} PDF {self._display_position(position)}쪽이 현재 PDF에 없습니다."
+                        f"{label} PDF {self._display_position(position)}쪽이 선택한 PDF에 없습니다."
                     )
                 resolved[role] = Content.pdf(path, position)
                 continue
             if cue.kind is ContentType.VIDEO:
-                source = self.video_panel.selected_source
+                source: Path | str | None
+                if cue.video_url:
+                    source = cue.video_url
+                else:
+                    active_source = self.video_panel.selected_source
+                    if cue.video_path is not None and cue.video_path.is_file():
+                        source = cue.video_path
+                    elif isinstance(active_source, str) or (
+                        active_source is not None and active_source.is_file()
+                    ):
+                        source = active_source
+                    else:
+                        source = None
                 if source is None or (isinstance(source, Path) and not source.is_file()):
                     return None, f"{label}에 사용할 영상을 먼저 선택하십시오."
                 resolved[role] = (
@@ -1389,6 +1439,22 @@ class ControllerWindow(QMainWindow):
                 continue
             return None, f"{label} 콘텐츠 종류를 지원하지 않습니다: {cue.kind.value}"
         return resolved, ""
+
+    @staticmethod
+    def _available_source_path(
+        saved_path: Path | None,
+        active_path: Path | None,
+    ) -> Path | None:
+        """Prefer an existing saved path, then an existing active path."""
+        if saved_path is not None:
+            resolved = saved_path.expanduser().resolve()
+            if resolved.is_file():
+                return resolved
+        if active_path is not None:
+            resolved = active_path.expanduser().resolve()
+            if resolved.is_file():
+                return resolved
+        return None
 
     @staticmethod
     def _display_position(position: int | None) -> str:

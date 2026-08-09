@@ -574,6 +574,7 @@ class BiblePanel(QWidget):
             self.key_color,
             source=source,
             reference=reference.key,
+            source_path=self.plan_path,
             label=self._cue_label(cue),
             label_style=self.reference_style,
         )

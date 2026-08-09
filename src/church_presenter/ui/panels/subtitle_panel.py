@@ -478,6 +478,7 @@ class SubtitlePanel(QWidget):
             self.key_color,
             source="praise",
             reference=cue.reference,
+            source_path=self.plan_path,
         )
 
     def _emit_preview(self) -> None:

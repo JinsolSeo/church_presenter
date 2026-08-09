@@ -352,6 +352,89 @@ def test_pdf_preview_preset_waits_for_high_resolution_prepare(qtbot, tmp_path: P
     assert window.state.broadcast.live_content.kind is ContentType.BLACK
 
 
+def test_preview_preset_uses_saved_pdf_path_per_channel(qtbot, tmp_path: Path) -> None:
+    broadcast_pdf = tmp_path / "broadcast.pdf"
+    venue_pdf = tmp_path / "venue.pdf"
+    create_pdf(broadcast_pdf, page_count=2)
+    create_pdf(venue_pdf, page_count=4)
+    window = make_controller(qtbot, tmp_path)
+    preset = PreviewPreset(
+        "서로 다른 PDF",
+        Content.pdf(broadcast_pdf, 1),
+        Content.pdf(venue_pdf, 3),
+    )
+    window.preview_presets = [preset]
+
+    assert window.apply_preview_preset(preset.name)
+    assert window.state.broadcast.preview_content == Content.pdf(broadcast_pdf, 1)
+    assert window.state.venue.preview_content == Content.pdf(venue_pdf, 3)
+
+
+def test_missing_saved_pdf_path_falls_back_to_active_pdf(qtbot, tmp_path: Path) -> None:
+    active_pdf = tmp_path / "active.pdf"
+    create_pdf(active_pdf, page_count=2)
+    window = make_controller(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 2, timeout=5000)
+    preset = PreviewPreset(
+        "PDF fallback",
+        Content.pdf(tmp_path / "missing.pdf", 1),
+        Content.black(),
+    )
+    window.preview_presets = [preset]
+
+    assert window.apply_preview_preset(preset.name)
+    assert window.state.broadcast.preview_content == Content.pdf(active_pdf, 1)
+
+
+def test_preview_preset_uses_saved_youtube_url_without_video_selection(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    url = "https://www.youtube.com/watch?v=abcdefghijk"
+    preset = PreviewPreset("YouTube", Content.youtube_video(url), Content.black())
+    window.preview_presets = [preset]
+
+    assert window.apply_preview_preset(preset.name)
+    assert window.state.broadcast.preview_content == Content.youtube_video(url)
+
+
+def test_preview_preset_uses_saved_local_video_without_video_selection(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    window = make_controller(qtbot, tmp_path)
+    video_path = tmp_path / "saved-video.mp4"
+    video_path.write_bytes(b"test video placeholder")
+    preset = PreviewPreset("Local video", Content.video(video_path), Content.black())
+    window.preview_presets = [preset]
+
+    assert window.apply_preview_preset(preset.name)
+    assert window.state.broadcast.preview_content == Content.video(video_path)
+
+
+def test_preview_preset_loads_saved_praise_plan(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    prepare_sample_praise(window)
+    plan_path = tmp_path / "saved-praise-plan.json"
+    window.subtitle_panel.plan_path = plan_path
+    assert window.subtitle_panel.save_plan()
+    saved_content = window.subtitle_panel._content_at(0).as_preset_reference()
+    window.subtitle_panel.entries = []
+    window.subtitle_panel.plan_path = None
+    window.subtitle_panel._rebuild()
+    preset = PreviewPreset("찬양 복원", saved_content, Content.black())
+    window.preview_presets = [preset]
+
+    assert window.apply_preview_preset(preset.name)
+    assert window.state.broadcast.preview_content.subtitle_reference == (
+        saved_content.subtitle_reference
+    )
+    assert window.state.broadcast.preview_content.subtitle_path == plan_path.resolve()
+
+
 def test_unavailable_preview_preset_preserves_existing_previews(qtbot, tmp_path: Path) -> None:
     window = make_controller(qtbot, tmp_path)
     before_broadcast = Content.subtitle("유지", 0, SubtitleStyle(), "#00FF00")

@@ -16,7 +16,13 @@ from church_presenter.domain.bible import (
     BibleVerse,
 )
 from church_presenter.domain.enums import ChannelRole, ContentType
-from church_presenter.domain.models import AppSettings, ScreenInfo, SubtitleStyle
+from church_presenter.domain.models import (
+    AppSettings,
+    Content,
+    PreviewPreset,
+    ScreenInfo,
+    SubtitleStyle,
+)
 from church_presenter.services.bible_service import BOOK_SPECS, BibleRepository
 from church_presenter.services.screen_service import MockScreenService
 from church_presenter.services.settings_service import SettingsService
@@ -275,6 +281,18 @@ def test_bible_range_builds_weekly_plan_and_navigates_preview(qtbot, tmp_path: P
     assert panel.load_plan_path(plan_path)
     assert panel.ranges[0].start.key == "GEN.1.1"
     assert panel.output_count == 1
+    assert panel.content_for_reference("GEN.1.1").subtitle_path == plan_path.resolve()
+
+    saved_content = panel.content_for_reference("GEN.1.1").as_preset_reference()
+    panel.ranges = []
+    panel.plan_path = None
+    panel._rebuild()
+    window.preview_presets = [
+        PreviewPreset("성경 콘티 복원", saved_content, Content.black())
+    ]
+
+    assert window.apply_preview_preset("성경 콘티 복원")
+    assert window.state.broadcast.preview_content.subtitle_path == plan_path.resolve()
 
 
 def test_bible_panel_puts_controls_left_and_tall_cue_list_right(qtbot, tmp_path: Path) -> None:
@@ -519,9 +537,11 @@ def test_praise_plan_round_trip_restores_song_and_selected_sections(
 
     assert restored.entries[0].sequence == ("chorus",)
     assert restored.output_count == 2
-    assert restored.content_for_reference(reference).text == (
+    restored_content = restored.content_for_reference(reference)
+    assert restored_content.text == (
         "은혜로 걷네 은혜로 살리\n모든 순간 주를 의지해"
     )
+    assert restored_content.subtitle_path == plan_path.resolve()
 
 
 def test_returning_from_instant_restores_prepared_preview_but_keeps_live(
