@@ -257,19 +257,8 @@ class Content:
         return Content.black()
 
     def to_preset_dict(self) -> dict[str, Any]:
-        """Serialize a file-independent worship-order cue."""
-        data: dict[str, Any] = {"kind": self.kind.value}
-        if self.kind is ContentType.SUBTITLE_KEY:
-            data["position"] = self.subtitle_card_index
-            if self.subtitle_source:
-                data["source"] = self.subtitle_source
-            if self.subtitle_reference:
-                data["reference"] = self.subtitle_reference
-        elif self.kind is ContentType.PDF_PAGE:
-            data["position"] = self.pdf_page
-        elif self.kind is ContentType.SOLID_COLOR:
-            data["color"] = self.background_color
-        return data
+        """Serialize a source-aware worship-order cue."""
+        return CueReference.from_content(self).to_dict()
 
     @classmethod
     def from_preset_dict(cls, data: dict[str, Any]) -> Content:

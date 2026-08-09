@@ -159,6 +159,7 @@ def test_cue_reference_retains_media_source(
     assert restored.path == expected_path
     assert restored.url == expected_url
     assert CueReference.from_content(restored.to_content()) == restored
+    assert Content.from_preset_dict(content.to_preset_dict()) == content.as_preset_reference()
 
 
 def test_cue_reference_retains_subtitle_plan_source() -> None:
