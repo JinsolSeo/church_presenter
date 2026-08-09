@@ -125,7 +125,7 @@ class VideoPanel(QWidget):
         self.target_toolbar.setContentsMargins(0, 0, 0, 0)
         self.feature_update_button = QPushButton("기능 최신화")
         self.feature_update_button.setToolTip(
-            "현재 프로젝트 .venv에서 yt-dlp, yt-dlp-ejs, python-mpv를 최신화합니다."
+            "현재 프로젝트 .venv에서 yt-dlp와 yt-dlp-ejs를 최신화합니다."
         )
         self.feature_update_button.setAccessibleName("YouTube 기능 최신화")
         self.target_toolbar.addWidget(self.feature_update_button)
@@ -291,7 +291,7 @@ class VideoPanel(QWidget):
             self,
             "기능 최신화",
             "현재 프로젝트 .venv에서 YouTube 재생 구성요소를 최신화합니다.\n\n"
-            "yt-dlp, yt-dlp-ejs, python-mpv가 업데이트되며 완료 후 앱을 다시 시작해야 "
+            "yt-dlp와 yt-dlp-ejs가 업데이트되며 완료 후 앱을 다시 시작해야 "
             "합니다. 계속하시겠습니까?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

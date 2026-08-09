@@ -11,7 +11,7 @@ from church_presenter.media.base import MediaPlaybackBackend
 
 
 class AudioBackendRouter(QObject):
-    """Route playlist items to Qt local audio or libmpv streaming audio."""
+    """Route playlist items to local or YouTube media backends."""
 
     loaded = Signal()
     position_changed = Signal(int)
@@ -24,7 +24,7 @@ class AudioBackendRouter(QObject):
     def __init__(
         self,
         local_backend: MediaPlaybackBackend,
-        youtube_backend: StreamingAudioBackend,
+        youtube_backend: MediaPlaybackBackend | StreamingAudioBackend,
     ) -> None:
         super().__init__()
         self.local_backend = local_backend

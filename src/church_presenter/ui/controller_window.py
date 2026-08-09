@@ -45,7 +45,6 @@ from church_presenter.domain.models import (
 from church_presenter.domain.state import ApplicationState
 from church_presenter.media.audio_controller import AudioPlaybackController
 from church_presenter.media.base import MediaPlaybackBackend
-from church_presenter.media.mpv_audio_backend import MpvAudioBackend
 from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
@@ -271,7 +270,9 @@ class ControllerWindow(QMainWindow):
                 video=False,
                 audio_device_resolver=self.audio_device_service.resolve,
             ),
-            streaming_backend=MpvAudioBackend(
+            streaming_backend=QtMediaBackend(
+                video=False,
+                streaming=True,
                 audio_device_resolver=self.audio_device_service.resolve,
             ),
             volume=settings.music_volume / 100,

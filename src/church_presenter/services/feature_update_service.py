@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
-UPDATE_REQUIREMENTS = ("yt-dlp[default]", "python-mpv<2")
+UPDATE_REQUIREMENTS = ("yt-dlp[default]",)
 MAX_OUTPUT_CHARACTERS = 32_000
 
 
@@ -68,7 +68,6 @@ def installed_feature_versions() -> str:
     for distribution, label in (
         ("yt-dlp", "yt-dlp"),
         ("yt-dlp-ejs", "yt-dlp-ejs"),
-        ("python-mpv", "python-mpv"),
     ):
         try:
             installed = version(distribution)

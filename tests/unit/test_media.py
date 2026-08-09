@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QUrl, Signal
+
 from church_presenter.domain.enums import (
     ChannelRole,
     ContentType,
@@ -19,6 +21,10 @@ from church_presenter.media.mock_backend import MockMediaBackend
 from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
+from church_presenter.media.youtube_resolver import (
+    ResolvedYouTubeStream,
+    YouTubeMetadata,
+)
 from church_presenter.services.file_library_service import scan_library, sort_items
 from church_presenter.services.transition_service import (
     FIXED_OUTPUT_FADE_DURATION_MS,
@@ -29,6 +35,82 @@ from church_presenter.services.transition_service import (
 def media_file(path: Path, content: bytes = b"generated") -> Path:
     path.write_bytes(content)
     return path
+
+
+class FakeYouTubeWorker(QObject):
+    resolved = Signal(str, object)
+    failed = Signal(str, str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.video_requests: list[tuple[str, str]] = []
+        self.cancelled: list[str] = []
+        self.closed = False
+
+    def request_video_stream(self, request_id: str, url: str) -> bool:
+        self.video_requests.append((request_id, url))
+        return True
+
+    def cancel(self, request_id: str) -> None:
+        self.cancelled.append(request_id)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _resolved_stream(source: str, stream_url: str) -> ResolvedYouTubeStream:
+    return ResolvedYouTubeStream(
+        stream_url,
+        YouTubeMetadata("Title", 60_000, "abcdefghijk", source),
+    )
+
+
+def test_audio_only_qt_backend_resolves_youtube_progressive_stream(qtbot) -> None:
+    worker = FakeYouTubeWorker()
+    backend = QtMediaBackend(
+        video=False,
+        streaming=True,
+        youtube_worker=worker,  # type: ignore[arg-type]
+    )
+    source = "https://www.youtube.com/watch?v=abcdefghijk"
+
+    backend.load(source)
+    request_id, requested_source = worker.video_requests[-1]
+    worker.resolved.emit(request_id, _resolved_stream(source, "https://cdn/stream.mp4"))
+
+    assert backend.video_sink is None
+    assert requested_source == source
+    assert backend.path == source
+    assert backend.player.source() == QUrl("https://cdn/stream.mp4")
+    diagnostic = backend.diagnostic()
+    assert "has_audio=" in diagnostic
+    assert "has_video=" in diagnostic
+    assert "audio_device=" in diagnostic
+    assert "source=https://www.youtube.com/watch?v=abcdefghijk" in diagnostic
+    backend.close()
+
+
+def test_audio_only_qt_backend_ignores_stale_youtube_result(qtbot) -> None:
+    worker = FakeYouTubeWorker()
+    backend = QtMediaBackend(
+        video=False,
+        streaming=True,
+        youtube_worker=worker,  # type: ignore[arg-type]
+    )
+    first = "https://www.youtube.com/watch?v=first123456"
+    second = "https://www.youtube.com/watch?v=second12345"
+
+    backend.load(first)
+    first_request = worker.video_requests[-1][0]
+    backend.load(second)
+    second_request = worker.video_requests[-1][0]
+    worker.resolved.emit(first_request, _resolved_stream(first, "https://cdn/first.mp4"))
+
+    assert backend.player.source().isEmpty()
+
+    worker.resolved.emit(second_request, _resolved_stream(second, "https://cdn/second.mp4"))
+    assert backend.player.source() == QUrl("https://cdn/second.mp4")
+    backend.close()
 
 
 def test_video_and_audio_extension_filters(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from uuid import uuid4
@@ -21,6 +22,8 @@ from church_presenter.media.youtube_resolver import (
     validate_youtube_url,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 class QtMediaBackend(MediaPlaybackBackend):
     """Qt Multimedia adapter used for local video and background audio."""
@@ -29,9 +32,12 @@ class QtMediaBackend(MediaPlaybackBackend):
         self,
         *,
         video: bool = False,
+        streaming: bool = False,
         audio_device_resolver: Callable[[str], QAudioDevice | None] | None = None,
+        youtube_worker: YouTubeWorkerService | None = None,
     ) -> None:
         super().__init__()
+        self._streaming = streaming
         self._audio_device_resolver = audio_device_resolver
         self._path: MediaSource | None = None
         self._status = PlaybackStatus.UNLOADED
@@ -48,7 +54,9 @@ class QtMediaBackend(MediaPlaybackBackend):
         if self.video_sink is not None:
             self.player.setVideoOutput(self.video_sink)
             self.video_sink.videoFrameChanged.connect(self._video_frame_changed)
-        self.youtube_worker = YouTubeWorkerService() if video else None
+        self.youtube_worker = youtube_worker
+        if self.youtube_worker is None and (video or streaming):
+            self.youtube_worker = YouTubeWorkerService()
         if self.youtube_worker is not None:
             self.youtube_worker.resolved.connect(self._youtube_resolved)
             self.youtube_worker.failed.connect(self._youtube_failed)
@@ -88,14 +96,14 @@ class QtMediaBackend(MediaPlaybackBackend):
             self._load_pending = True
             self._set_status(PlaybackStatus.LOADING)
             if self.youtube_worker is None:
-                self._emit_error("YouTube 영상 backend이 준비되지 않았습니다.")
+                self._emit_error("YouTube 미디어 backend이 준비되지 않았습니다.")
                 return
             self._youtube_request_id = uuid4().hex
             if not self.youtube_worker.request_video_stream(
                 self._youtube_request_id,
                 source,
             ):
-                self._emit_error("YouTube 영상 준비 요청을 시작하지 못했습니다.")
+                self._emit_error("YouTube 미디어 준비 요청을 시작하지 못했습니다.")
             return
         resolved = path.expanduser().resolve()
         self._path = resolved
@@ -178,9 +186,20 @@ class QtMediaBackend(MediaPlaybackBackend):
         media_status = self.player.mediaStatus().name
         playback_state = self.player.playbackState().name
         error = self.player.errorString().strip() or "none"
+        error_code = self.player.error().name
+        has_audio_method = getattr(self.player, "hasAudio", None)
+        has_video_method = getattr(self.player, "hasVideo", None)
+        has_audio = bool(has_audio_method()) if callable(has_audio_method) else False
+        has_video = bool(has_video_method()) if callable(has_video_method) else False
+        device = self.audio_output.device()
+        audio_device = device.description().strip() if not device.isNull() else "system-default"
         return (
             f"status={self._status.value}, media_status={media_status}, "
-            f"playback_state={playback_state}, load_pending={self._load_pending}, "
+            f"playback_state={playback_state}, error_code={error_code}, "
+            f"has_audio={has_audio}, has_video={has_video}, "
+            f"audio_device={audio_device}, volume={self.audio_output.volume():.3f}, "
+            f"muted={self.audio_output.isMuted()}, streaming={self._streaming}, "
+            f"source={self._path}, load_pending={self._load_pending}, "
             f"youtube_pending={bool(self._youtube_request_id)}, "
             f"priming={self._priming_video}, position_ms={self.player.position()}, "
             f"duration_ms={self.player.duration()}, error={error}"
@@ -306,4 +325,5 @@ class QtMediaBackend(MediaPlaybackBackend):
         self._priming_video = False
         self._accept_video_frames = False
         self._set_status(PlaybackStatus.ERROR)
+        LOGGER.error("Qt media backend error: %s; %s", message, self.diagnostic())
         self.error_occurred.emit(message)

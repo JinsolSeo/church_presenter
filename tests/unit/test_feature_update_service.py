@@ -12,6 +12,10 @@ from church_presenter.services.feature_update_service import (
 )
 
 
+def test_feature_update_only_installs_youtube_resolver_components() -> None:
+    assert UPDATE_REQUIREMENTS == ("yt-dlp[default]",)
+
+
 def test_feature_update_command_uses_running_dot_venv_python(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

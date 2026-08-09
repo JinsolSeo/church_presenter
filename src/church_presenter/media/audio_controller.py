@@ -21,7 +21,7 @@ from church_presenter.domain.models import (
 from church_presenter.media.audio_backend import StreamingAudioBackend
 from church_presenter.media.audio_router import AudioBackendRouter
 from church_presenter.media.base import MediaPlaybackBackend
-from church_presenter.media.mpv_audio_backend import MpvAudioBackend
+from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.youtube_resolver import (
     YouTubeMetadata,
     YouTubeWorkerService,
@@ -43,7 +43,7 @@ class AudioPlaybackController(QObject):
         playlist: AudioPlaylist | None = None,
         *,
         router: AudioBackendRouter | None = None,
-        streaming_backend: StreamingAudioBackend | None = None,
+        streaming_backend: MediaPlaybackBackend | StreamingAudioBackend | None = None,
         metadata_service: YouTubeWorkerService | None = None,
         volume: float = 0.7,
         muted: bool = False,
@@ -54,7 +54,7 @@ class AudioPlaybackController(QObject):
         self.backend = backend
         self.router = router or AudioBackendRouter(
             backend,
-            streaming_backend or MpvAudioBackend(),
+            streaming_backend or QtMediaBackend(video=False, streaming=True),
         )
         self.metadata_service = metadata_service or YouTubeWorkerService()
         self.playlist = playlist or AudioPlaylist()

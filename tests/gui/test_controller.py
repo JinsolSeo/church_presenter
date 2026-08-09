@@ -16,6 +16,7 @@ from church_presenter.domain.models import (
     ScreenInfo,
     SubtitleStyle,
 )
+from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.rendering.output_surface import OutputSurface
 from church_presenter.services.screen_service import MockScreenService
 from church_presenter.services.settings_service import SettingsService
@@ -91,6 +92,15 @@ def test_preview_selection_waits_for_take(qtbot, tmp_path: Path) -> None:
     assert window.state.broadcast.live_content == content
     assert window.broadcast_simulator is not None
     assert window.broadcast_simulator.surface.target_content == content
+
+
+def test_controller_uses_qt_for_local_and_youtube_music(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+
+    assert isinstance(window.audio_controller.router.local_backend, QtMediaBackend)
+    assert isinstance(window.audio_controller.router.youtube_backend, QtMediaBackend)
+    assert window.audio_controller.router.youtube_backend.video_sink is None
+    assert window.audio_controller.router.youtube_backend.youtube_worker is not None
 
 
 def test_theme_switch_is_persisted_without_changing_preview_or_live(
