@@ -46,27 +46,25 @@
 - [ ] 영상 종료/Stop/Error 후 음악 자동 재개 안 됨
 - [ ] 공개 단일 YouTube URL 메타데이터 조회
 - [ ] YouTube Play/Pause/Stop/Seek/Previous/Next 및 반복
-- [ ] yt-dlp 응답의 User-Agent/Referer가 libmpv 요청에 전달되고 위치가 증가함
-- [ ] 선택한 USB/HDMI 출력으로 YouTube 오디오가 나오거나 장치 mapping fallback 로그가 남음
+- [ ] YouTube 음악이 Qt progressive 스트림을 준비하고 재생 위치가 증가함
+- [ ] 로그에 `has_audio=True`, 원본 URL, Qt media/playback 상태가 기록됨
+- [ ] 선택한 USB/HDMI 출력으로 로컬·YouTube 오디오가 모두 재생됨
 - [ ] PREPARING/BUFFERING/ERROR 상태에서 Controller 응답 유지
 - [ ] 네트워크 차단 시 로컬 fallback 전환 문구와 재생
 - [ ] fallback 없음/삭제 시 항목 오류만 발생하고 로컬 미디어 유지
 - [ ] yt-dlp 미설치 상태에서 로컬 음악/영상 유지
 - [ ] 영상 탭 `기능 최신화`가 프로젝트 `.venv` Python을 사용하고 진행 중 UI 응답 유지
-- [ ] 최신화 결과에 yt-dlp/yt-dlp-ejs/python-mpv 버전과 Deno PATH 감지 상태 표시
+- [ ] 최신화 결과에 yt-dlp/yt-dlp-ejs 버전과 Deno PATH 감지 상태 표시
 - [ ] 최신화 성공 후 재시작 안내 및 재시작한 프로세스에서 YouTube 음악 재생
 - [ ] 최신화·재시작 후 JS challenge 경고 없이 EJS를 사용해 실제 오디오 스트림 해석
-- [ ] `mpv-2.dll` 없음 또는 로드 실패 상태에서 앱 유지
-- [ ] 종료 후 libmpv thread/process 잔류 없음
+- [ ] `python-mpv`와 `mpv-2.dll`을 설치하지 않은 환경에서 YouTube 음악 재생
+- [ ] 종료 후 Qt media thread/process 잔류 없음
 
-Windows 개발 환경에서는 `python -m pip install -e ".[dev]"`로 Python wrapper와
-yt-dlp를 설치한 뒤, `mpv-2.dll`을 제공하는 libmpv 빌드의 디렉터리를 `PATH` 또는
-`CHURCH_PRESENTER_LIBMPV_DIR`의 절대 경로로 지정합니다. 배포 패키지는 DLL과 의존
-DLL을 실행 파일 옆 `libmpv` 폴더에 포함하고 대상 PC에서 새 프로세스로 실행해 로드
-여부를 확인합니다. Python과 libmpv의 32/64비트가 일치해야 합니다. YouTube 검증 전에는
-영상 탭의 `기능 최신화`로 extractor, EJS, Python mpv binding을 함께 갱신합니다. UI를
-사용할 수 없는 개발 환경에서는 `python -m pip install --upgrade "yt-dlp[default]"`로
-extractor와 EJS를 갱신합니다.
+Windows 개발 환경에서는 `python -m pip install -e ".[dev]"`로 Qt Multimedia와
+yt-dlp를 설치합니다. YouTube 검증 전에는 영상 탭의 `기능 최신화`로 extractor와 EJS를
+함께 갱신합니다. UI를 사용할 수 없는 개발 환경에서는
+`python -m pip install --upgrade "yt-dlp[default]"`를 사용합니다. 별도 libmpv DLL은
+필요하지 않습니다.
 
 ## 운영 안정성
 
@@ -90,5 +88,5 @@ extractor와 EJS를 갱신합니다.
 
 Qt Multimedia에서 운영 파일의 재생 실패, 오디오만 재생, 부정확한 탐색, 종료 신호
 누락 또는 GPU 호환 문제가 반복되면 파일을 권장 MP4로 재인코딩해 비교합니다. 권장
-파일도 실패하면 로그와 파일의 `ffprobe` 결과를 보존하고 Phase 3 libmpv backend
-검토 항목으로 등록합니다.
+파일도 실패하면 로그와 파일의 `ffprobe` 결과를 보존하고 대체 media backend 검토
+항목으로 등록합니다.

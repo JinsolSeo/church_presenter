@@ -392,16 +392,15 @@ Controller/Simulation/실제 출력의 `OutputSurface`가 각각 `QPainter.drawI
 
 ### 21. Windows에서 YouTube 정보는 보이지만 오디오 재생은 시작되지 않음
 
-메타데이터 조회는 yt-dlp만 사용하지만 실제 재생은 별도의 libmpv 초기화와 HTTP
-요청을 거친다. 기존 구현은 yt-dlp가 선택한 임시 URL만 넘겨 User-Agent, Referer,
-기타 헤더와 HTTP 요청 크기 힌트를 버렸다. 또한 Windows DLL의 위치와 Qt/libmpv 출력
-장치 이름 차이를 처리하지 않아 조회 성공 뒤 재생만 실패할 수 있었다.
+메타데이터 조회 뒤 실제 재생만 별도의 libmpv와 Windows DLL에 의존해 macOS에서는
+정상인데 Windows에서는 시작되지 않을 수 있었다. 영상의 YouTube 재생은 이미 Qt
+Multimedia의 progressive 스트림 경로에서 정상 동작하고 있었다.
 
-현재 resolver는 URL과 함께 검증한 HTTP 헤더, protocol, codec과 요청 크기 힌트를
-메모리로 전달한다. mpv backend는 이를 loadfile 전에 설정하며 Windows 실행 파일,
-`libmpv`/`mpv` 하위 폴더, `CHURCH_PRESENTER_LIBMPV_DIR`을 안전한 DLL 검색 경로로
-등록한다. 선택 출력은 native ID와 설명으로 대응하고 실패하면 시스템 기본 장치를
-사용한다. 30초 준비 timeout과 libmpv load/stream 오류 로그도 추가했다.
+현재 로컬 음악과 YouTube 음악은 모두 오디오 전용 `QtMediaBackend`를 사용한다.
+YouTube 음악은 영상과 같은 progressive 스트림을 해석하지만 video sink는 만들지 않고
+`QAudioOutput`만 연결한다. `python-mpv`와 `mpv-2.dll` 요구사항은 제거했다. 오류 로그에는
+Qt media/playback 상태, hasAudio/hasVideo, 원본 URL, 선택 출력 장치, 볼륨과 음소거를
+남겨 Windows 장치·codec 문제를 구분할 수 있다.
 
 ## 다시 사용하지 않을 접근 요약
 

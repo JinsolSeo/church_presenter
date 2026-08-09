@@ -6,7 +6,7 @@ Phase 2 is a native PySide6 desktop application for one operator, one broadcast
 key/PDF/video output, one venue PDF/video output, and one application-wide
 background-music player. Video and background music accept local files and public
 single-video YouTube URLs. Downloads, playlist import, authentication, other web
-streaming, camera capture, OBS, ATEM control, and device-specific mpv routing remain
+streaming, camera capture, OBS, ATEM control, and provider-specific audio routing remain
 outside scope.
 
 ## Reference analysis
@@ -26,7 +26,7 @@ ui -> application commands/state -> domain
 ui -> rendering -> domain
 ui -> services -> domain
 services -> filesystem / Qt screen API / PyMuPDF
-media -> domain contract / Qt Multimedia, yt-dlp, and libmpv adapters
+media -> domain contract / Qt Multimedia and yt-dlp adapters
 remote server thread -> validated protocol -> Qt queued signal -> Controller widgets
 ```
 
@@ -107,7 +107,7 @@ frame to an image for the short fade and then clears the native sink.
 `MediaPlaybackBackend` is the replaceable local-or-network media command/signal contract.
 `QtMediaBackend` contains every `QMediaPlayer`, `QAudioOutput`, and `QVideoSink`
 dependency. `MockMediaBackend` gives tests deterministic frames and playback
-events without codecs or audio devices. A future libmpv video implementation can
+events without codecs or audio devices. A future alternative video adapter can
 replace the video adapter without changing `ApplicationState` or output widgets.
 `AudioDeviceService` enumerates Qt audio outputs, persists an encoded device ID,
 and resolves it for every video and background-music backend. An empty ID keeps
@@ -136,21 +136,18 @@ atomically written to that file without a save dialog. The compact transport pan
 to the right of the folder playlist. It shows the current track, playback state, and transport
 controls; the active track is painted with the theme accent in the left list and detailed
 operational notices use the Controller status bar.
-The router sends local files to the existing `QtMediaBackend` and YouTube sources to
-`MpvAudioBackend`. `YtDlpResolver` validates the public single-video URL and resolves
-metadata or an ephemeral best-audio URL in a bounded worker pool. `MpvAudioBackend`
-initializes libmpv off the UI thread, disables video, normalizes position/duration/status
-signals, forwards yt-dlp's HTTP headers and request-size hint, and detects preparation and
-buffering timeouts. On Windows it registers bundled libmpv directories before importing
-python-mpv. It best-effort maps Qt output IDs/descriptions to libmpv device names and falls
-back to the system default when names cannot be matched. A Qt timer mirrors core libmpv
-properties as a macOS-safe fallback when python-mpv's native event callbacks are not
-delivered. The backend releases its player on source switch or shutdown.
+The router sends local files to one audio-only `QtMediaBackend` and YouTube sources to a
+second audio-only `QtMediaBackend`. `YtDlpResolver` validates the public single-video URL
+and resolves metadata or an ephemeral progressive stream in a bounded worker pool. The
+streaming Qt backend keeps the original URL as its stable source, rejects stale resolver
+results by request ID and generation, and supplies the resolved URL to `QMediaPlayer`
+without creating a video sink. Both paths therefore share Qt output-device, volume, mute,
+position, duration, state, and error behavior on macOS and Windows.
 
 ```text
 AudioPanel -> AudioPlaybackController -> AudioBackendRouter
                                       -> QtMediaBackend (local Path)
-                                      -> MpvAudioBackend -> yt-dlp -> ephemeral URL
+                                      -> QtMediaBackend (YouTube URL) -> yt-dlp -> ephemeral URL
 ```
 
 If streaming preparation or playback fails, the router prepares the configured local
@@ -296,11 +293,13 @@ zoom and pan to fit.
 It writes a temporary file, fsyncs it, and atomically replaces the target. Invalid
 JSON is renamed with a `.corrupt-<timestamp>` suffix and defaults are returned
 with a non-fatal warning. Worship-order presets use the same policy in a separate
-schema-v3 JSON file. Each subtitle cue is a `CueReference`: praise stores a semantic
-song-plan entry, section occurrence, and source-line key, while Bible stores a
-semantic book/chapter/verse key.
-Neither rendered text nor Bible corpus data is embedded. Schema v1 snapshot and
-schema v2 position-only worship orders remain readable; new saves use v3.
+schema-v4 JSON file. Each `CueReference` stores its source provenance: praise and Bible
+store an absolute plan path plus semantic reference, PDF stores an absolute path and page,
+local video stores an absolute path, and YouTube video stores its original URL. Neither
+rendered text, Bible corpus data, nor media bytes are embedded. Resolution prefers an
+existing saved path and falls back per cue to the active panel source when that path is
+missing; both Preview values are committed only after both cues resolve. Schema v1 snapshot
+and schema v2/v3 compact worship orders remain readable; new saves use v4.
 
 Weekly Bible citation files are independent schema-v1 documents containing only
 ordered inclusive ranges and a relative Bible source file name. Loading validates

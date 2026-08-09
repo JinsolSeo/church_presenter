@@ -6,6 +6,7 @@ module: feature_update_service
 problem_type: tooling_decision
 component: tooling
 severity: medium
+status: superseded
 applies_when:
   - An installed desktop application updates YouTube playback dependencies from its UI
   - The application runs from a project-local virtual environment on Windows or macOS
@@ -22,6 +23,13 @@ tags:
 ---
 
 # Update YouTube playback dependencies with the running virtual environment
+
+> Superseded on 2026-08-09. This document records the former libmpv-based audio path and
+> must not be used as current setup guidance. YouTube music now uses the same audio-only
+> Qt Multimedia progressive-stream path as YouTube video. The updater installs only
+> `yt-dlp[default]`; `python-mpv`, native libmpv, and `mpv-2.dll` are no longer required.
+> See [Media playback](../../media-playback.md) and the
+> [Windows checklist](../../windows-media-test.md) for current instructions.
 
 ## Context
 
