@@ -201,6 +201,22 @@ def test_monitor_semantics_and_take_variants_are_explicit(qtbot, tmp_path: Path)
     assert window.video_panel.take_both_button.property("variant") == "take"
     assert window.video_panel.target_combo.itemText(0) == "송출"
     assert window.video_panel.target_combo.itemText(1) == "현장"
+    assert window.sync_take_button.text() == "동시 송출"
+    assert window.subtitle_panel.take_button.text() == "송출"
+    assert window.bible_panel.take_button.text() == "송출"
+    assert window.instant_panel.take_button.text() == "송출"
+    assert window.pdf_panel.take_button.text() == "송출"
+    assert window.pdf_panel.take_both_button.text() == "동시 송출"
+    assert window.video_panel.take_button.text() == "송출"
+    assert window.video_panel.take_both_button.text() == "동시 송출"
+    assert window.black_panel.take_broadcast_button.text() == "송출 화면 적용"
+    assert window.black_panel.take_venue_button.text() == "현장 화면 적용"
+    assert window.black_panel.take_both_button.text() == "동시 송출"
+
+    window.pdf_panel.set_compact_actions(True)
+    assert window.pdf_panel.take_button.text() == "송출"
+    window.pdf_panel.set_compact_actions(False)
+    assert window.pdf_panel.take_button.text() == "송출"
 
 
 def test_controller_layout_declares_fhd_baseline_and_responsive_minimum(
@@ -999,6 +1015,142 @@ def test_focused_content_tab_keeps_individual_navigation(qtbot, tmp_path: Path) 
     assert window.pdf_panel.preview_page == 0
 
 
+def test_broadcast_monitors_route_from_preview_not_live_without_changing_state(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "broadcast-live.pdf"
+    create_pdf(pdf_path)
+    window = make_controller(qtbot, tmp_path)
+    bible_preview = Content.subtitle(
+        "태초에 하나님이 천지를 창조하시니라",
+        0,
+        SubtitleStyle(),
+        "#00FF00",
+        source="bible",
+    )
+    pdf_live = Content.pdf(pdf_path, 1)
+    venue_preview = Content.black()
+    venue_live = Content.solid_color("#0000FF")
+    window.state.broadcast.preview_content = bible_preview
+    window.state.broadcast.live_content = pdf_live
+    window.state.venue.preview_content = venue_preview
+    window.state.venue.live_content = venue_live
+    before = (
+        window.state.broadcast.preview_content,
+        window.state.broadcast.live_content,
+        window.state.venue.preview_content,
+        window.state.venue.live_content,
+        window.state.broadcast.is_ready,
+        window.state.venue.is_ready,
+    )
+
+    window.tabs.setCurrentWidget(window.pdf_panel)
+    qtbot.mouseClick(window.broadcast_preview.surface, Qt.MouseButton.LeftButton)
+    assert window.tabs.currentWidget() is window.bible_panel
+    qtbot.waitUntil(window.bible_panel.plan_list.hasFocus)
+    assert (
+        window.state.broadcast.preview_content,
+        window.state.broadcast.live_content,
+        window.state.venue.preview_content,
+        window.state.venue.live_content,
+        window.state.broadcast.is_ready,
+        window.state.venue.is_ready,
+    ) == before
+
+    window.tabs.setCurrentWidget(window.pdf_panel)
+    qtbot.mouseClick(window.broadcast_live.surface, Qt.MouseButton.LeftButton)
+    assert window.tabs.currentWidget() is window.bible_panel
+    qtbot.waitUntil(window.bible_panel.plan_list.hasFocus)
+    assert (
+        window.state.broadcast.preview_content,
+        window.state.broadcast.live_content,
+        window.state.venue.preview_content,
+        window.state.venue.live_content,
+        window.state.broadcast.is_ready,
+        window.state.venue.is_ready,
+    ) == before
+
+
+def test_monitor_routing_suppresses_tab_preview_restore(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+    prepare_sample_praise(window)
+    window.subtitle_panel.navigate(1)
+    expected_preview = window.state.broadcast.preview_content
+    window.subtitle_panel.preview_index = 0
+    window.tabs.setCurrentWidget(window.pdf_panel)
+
+    qtbot.mouseClick(window.broadcast_live.surface, Qt.MouseButton.LeftButton)
+
+    assert window.tabs.currentWidget() is window.subtitle_panel
+    qtbot.waitUntil(window.subtitle_panel.card_list.hasFocus)
+    assert window.state.broadcast.preview_content == expected_preview
+
+
+def test_venue_monitor_routes_pdf_keys_to_venue_preview_only(qtbot, tmp_path: Path) -> None:
+    pdf_path = tmp_path / "venue-control.pdf"
+    create_pdf(pdf_path)
+    window = make_controller(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window.pdf_panel.file_list.count() == 1, timeout=5000)
+    window.pdf_panel.set_target_role(ChannelRole.VENUE)
+    window.pdf_panel.file_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: window.pdf_panel.page_count == 3, timeout=5000)
+    qtbot.waitUntil(lambda: window.state.venue.is_ready, timeout=10000)
+    broadcast_preview = Content.subtitle(
+        "송출 자막 유지",
+        0,
+        SubtitleStyle(),
+        "#00FF00",
+        source="praise",
+    )
+    window.state.broadcast.preview_content = broadcast_preview
+    live_before = (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    )
+    window.pdf_panel.set_link_outputs(True)
+    window.tabs.setCurrentWidget(window.subtitle_panel)
+
+    qtbot.mouseClick(window.venue_live.surface, Qt.MouseButton.LeftButton)
+
+    assert window.tabs.currentWidget() is window.pdf_panel
+    assert window.pdf_panel.target_roles == (ChannelRole.VENUE,)
+    qtbot.waitUntil(window.pdf_panel.thumbnail_list.hasFocus)
+    qtbot.keyClick(window.pdf_panel.thumbnail_list, Qt.Key.Key_Right)
+    assert window.state.venue.preview_content.pdf_page == 1
+    assert window.state.broadcast.preview_content == broadcast_preview
+    assert (
+        window.state.broadcast.live_content,
+        window.state.venue.live_content,
+    ) == live_before
+
+
+def test_monitor_routing_covers_video_instant_text_and_blank(qtbot, tmp_path: Path) -> None:
+    window = make_controller(qtbot, tmp_path)
+
+    window.state.venue.preview_content = Content.video(tmp_path / "venue.mp4")
+    qtbot.mouseClick(window.venue_preview.surface, Qt.MouseButton.LeftButton)
+    assert window.tabs.currentWidget() is window.video_panel
+    assert window.video_panel.target_role is ChannelRole.VENUE
+    qtbot.waitUntil(window.video_panel.file_list.hasFocus)
+
+    window.state.broadcast.preview_content = Content.subtitle(
+        "즉석 안내",
+        0,
+        SubtitleStyle(),
+        "#00FF00",
+        source="instant_text",
+    )
+    qtbot.mouseClick(window.broadcast_preview.surface, Qt.MouseButton.LeftButton)
+    assert window.tabs.currentWidget() is window.misc_panel
+    qtbot.waitUntil(window.instant_panel.hasFocus)
+
+    window.state.broadcast.preview_content = Content.black()
+    qtbot.mouseClick(window.broadcast_live.surface, Qt.MouseButton.LeftButton)
+    assert window.tabs.currentWidget() is window.misc_panel
+    qtbot.waitUntil(window.black_panel.hasFocus)
+
+
 def test_linked_navigation_uses_each_preview_content_type(qtbot, tmp_path: Path) -> None:
     path = tmp_path / "content-types.pdf"
     create_pdf(path)
@@ -1029,7 +1181,7 @@ def test_sync_checkbox_uses_one_indicator_and_compact_label(qtbot, tmp_path: Pat
     assert window.sync_content_check.text() == "동시 진행"
     assert window.sync_auto_take_check.text() == "바로 Live"
     assert "☐" not in window.sync_content_check.text()
-    assert window.sync_take_button.text() == "TAKE BOTH"
+    assert window.sync_take_button.text() == "동시 송출"
     checkbox_gap = (
         window.sync_auto_take_check.geometry().left()
         - window.sync_content_check.geometry().right()

@@ -47,9 +47,9 @@ class BlackPanel(QWidget):
         self.preview_broadcast_button = QPushButton("송출 Preview 준비")
         self.preview_venue_button = QPushButton("현장 Preview 준비")
         self.send_both_button = QPushButton("Send to Both")
-        self.take_broadcast_button = QPushButton("TAKE 송출")
-        self.take_venue_button = QPushButton("TAKE 현장")
-        self.take_both_button = QPushButton("TAKE BOTH")
+        self.take_broadcast_button = QPushButton("송출 화면 적용")
+        self.take_venue_button = QPushButton("현장 화면 적용")
+        self.take_both_button = QPushButton("동시 송출")
         self.send_both_button.setProperty("variant", "primary")
         for take_button in (
             self.take_broadcast_button,

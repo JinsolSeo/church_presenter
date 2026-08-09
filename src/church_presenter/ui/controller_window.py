@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QByteArray, QEvent, QEventLoop, QObject, QSize, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCloseEvent, QImage, QKeyEvent, QMouseEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
@@ -100,6 +100,8 @@ class ChannelMonitor(QFrame):
         state_name = "LIVE" if live else "PREVIEW"
         self.setObjectName("LiveMonitor" if live else "PreviewMonitor")
         self.setProperty("stateRole", state_role)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"클릭하면 {channel_name} Preview 콘텐츠 제어로 전환합니다.")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -295,6 +297,7 @@ class ControllerWindow(QMainWindow):
         self._ui_density = ""
         self._linked_auto_take_pending = False
         self._linked_auto_take_snapshot: tuple[Content, Content] | None = None
+        self._suppress_content_tab_restore = False
         self.setWindowTitle("Church Presenter")
         self.setMinimumSize(CONTROLLER_MINIMUM_SIZE)
         self.resize(CONTROLLER_DEFAULT_SIZE)
@@ -486,7 +489,7 @@ class ControllerWindow(QMainWindow):
         self.sync_previous_button.setProperty("variant", "ghost")
         self.sync_next_button = QPushButton("함께 다음 ▶")
         self.sync_next_button.setProperty("variant", "ghost")
-        self.sync_take_button = QPushButton("TAKE BOTH")
+        self.sync_take_button = QPushButton("동시 송출")
         self.sync_take_button.setObjectName("LinkedTakeBoth")
         self.sync_take_button.setProperty("variant", "take")
         sync_layout.addWidget(self.sync_title)
@@ -557,6 +560,8 @@ class ControllerWindow(QMainWindow):
             self.settings.instant_text_group_size,
         )
         self.black_panel = BlackPanel()
+        self.instant_panel.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.black_panel.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.misc_panel = MiscPanel(self.instant_panel, self.black_panel)
         self.subtitle_sources = {
             "instant": self.instant_panel,
@@ -654,6 +659,8 @@ class ControllerWindow(QMainWindow):
         QTimer.singleShot(0, self._fit_scroll_content)
 
     def _content_tab_changed(self, _index: int) -> None:
+        if self._suppress_content_tab_restore:
+            return
         panel = self.tabs.currentWidget()
         if panel is self.subtitle_panel:
             self.subtitle_panel.restore_preview()
@@ -2368,6 +2375,64 @@ class ControllerWindow(QMainWindow):
     def _is_within(widget: QWidget | None, container: QWidget) -> bool:
         return widget is container or (widget is not None and container.isAncestorOf(widget))
 
+    def _monitor_role(self, widget: QWidget | None) -> ChannelRole | None:
+        if widget is None:
+            return None
+        for role, monitors in (
+            (
+                ChannelRole.BROADCAST,
+                (self.broadcast_preview, self.broadcast_live),
+            ),
+            (
+                ChannelRole.VENUE,
+                (self.venue_preview, self.venue_live),
+            ),
+        ):
+            if any(self._is_within(widget, monitor) for monitor in monitors):
+                return role
+        return None
+
+    def _select_monitor_control_tab(self, panel: QWidget) -> None:
+        """Select a control tab without restoring that tab's stale Preview."""
+        self._suppress_content_tab_restore = True
+        try:
+            self.tabs.setCurrentWidget(panel)
+        finally:
+            self._suppress_content_tab_restore = False
+
+    def _activate_preview_control(self, role: ChannelRole) -> None:
+        """Route a monitor click using only the clicked channel's Preview."""
+        content = self.state.channel(role).preview_content
+        panel: QWidget
+        focus_target: QWidget
+        if content.kind is ContentType.SUBTITLE_KEY:
+            if content.subtitle_source == "bible":
+                panel = self.bible_panel
+                focus_target = self.bible_panel.plan_list
+            elif content.subtitle_source.startswith("instant"):
+                panel = self.misc_panel
+                focus_target = self.instant_panel
+            else:
+                panel = self.subtitle_panel
+                focus_target = self.subtitle_panel.card_list
+        elif content.kind is ContentType.PDF_PAGE:
+            self.pdf_panel.set_target_role(role)
+            panel = self.pdf_panel
+            focus_target = self.pdf_panel.thumbnail_list
+        elif content.kind is ContentType.VIDEO:
+            self.video_panel.set_target_role(role)
+            panel = self.video_panel
+            focus_target = self.video_panel.file_list
+        else:
+            panel = self.misc_panel
+            focus_target = self.black_panel
+        self._select_monitor_control_tab(panel)
+        focus_target.setFocus(Qt.FocusReason.MouseFocusReason)
+        QTimer.singleShot(
+            0,
+            lambda target=focus_target: target.setFocus(Qt.FocusReason.MouseFocusReason),
+        )
+
     def _focus_changed(self, _previous: QWidget | None, current: QWidget | None) -> None:
         active = self._is_within(current, self.sync_bar)
         self.sync_bar.setProperty("keyboardActive", active)
@@ -2415,6 +2480,14 @@ class ControllerWindow(QMainWindow):
         return None
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            event.type() is QEvent.Type.MouseButtonRelease
+            and isinstance(event, QMouseEvent)
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            role = self._monitor_role(watched if isinstance(watched, QWidget) else None)
+            if role is not None:
+                self._activate_preview_control(role)
         if (
             event.type() is QEvent.Type.KeyPress
             and isinstance(event, QKeyEvent)

@@ -209,8 +209,8 @@ class PdfPanel(QWidget):
         self.go_button = QPushButton("페이지 이동")
         self.send_both_button = QPushButton("Send to Both")
         self.send_both_button.setProperty("variant", "primary")
-        self.take_button = QPushButton("TAKE selected channel")
-        self.take_both_button = QPushButton("TAKE BOTH")
+        self.take_button = QPushButton("송출")
+        self.take_both_button = QPushButton("동시 송출")
         self.take_button.setProperty("variant", "take")
         self.take_both_button.setProperty("variant", "take")
         for action_button in (
@@ -357,7 +357,7 @@ class PdfPanel(QWidget):
         """Keep one action row while shortening labels in narrow workspaces."""
         self.action_layout.setDirection(QBoxLayout.Direction.LeftToRight)
         self.send_both_button.setText("Send Both" if compact else "Send to Both")
-        self.take_button.setText("TAKE" if compact else "TAKE selected channel")
+        self.take_button.setText("송출")
         self.send_both_button.setToolTip("송출과 현장 Preview를 함께 준비")
         self.take_button.setToolTip("선택한 한 채널을 Live로 전환")
         self.action_layout.invalidate()

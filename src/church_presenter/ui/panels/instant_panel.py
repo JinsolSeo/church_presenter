@@ -39,7 +39,7 @@ class InstantPanel(QWidget):
         self.style_button = QPushButton("Style")
         self.previous_button = QPushButton("◀ 이전")
         self.next_button = QPushButton("다음 ▶")
-        self.take_button = QPushButton("TAKE")
+        self.take_button = QPushButton("송출")
         self.take_button.setProperty("variant", "take")
         controls.addWidget(self.style_button)
         controls.addStretch()

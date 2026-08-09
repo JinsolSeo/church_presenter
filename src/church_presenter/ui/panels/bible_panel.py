@@ -147,7 +147,7 @@ class BiblePanel(QWidget):
         navigation_row = QHBoxLayout()
         self.previous_button = QPushButton("◀ 이전")
         self.next_button = QPushButton("다음 ▶")
-        self.take_button = QPushButton("TAKE")
+        self.take_button = QPushButton("송출")
         self.take_button.setProperty("variant", "take")
         navigation_row.addWidget(self.previous_button)
         navigation_row.addWidget(self.next_button)

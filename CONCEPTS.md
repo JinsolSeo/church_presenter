@@ -4,6 +4,14 @@ Shared domain vocabulary for this project — entities, named processes, and sta
 
 ## Media presentation
 
+### Preview
+
+The per-channel content currently prepared for operator inspection and navigation. Preview navigation does not change Live; a successful TAKE validates and copies Preview into Live.
+
+### Live
+
+The per-channel content state committed for live output. Live changes through a validated TAKE or an explicit safety transition, not through ordinary Preview navigation.
+
 ### Media Source
 
 The stable operator-selected identity of playable media, either a local file or an original remote URL; temporary stream URLs resolved for playback do not replace this identity.

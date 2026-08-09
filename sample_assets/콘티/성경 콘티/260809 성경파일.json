@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_bible_plan",
+  "bible_source": "new_korean_translation.json",
+  "translation_id": "new_korean_translation",
+  "ranges": [
+    {
+      "start": "GEN.1.1",
+      "end": "GEN.1.1"
+    },
+    {
+      "start": "ZEC.1.1",
+      "end": "ZEC.1.1"
+    },
+    {
+      "start": "OBA.1.1",
+      "end": "OBA.1.4"
+    },
+    {
+      "start": "ZEC.1.2",
+      "end": "ZEC.1.17"
+    }
+  ]
+}

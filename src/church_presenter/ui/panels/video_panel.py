@@ -96,6 +96,12 @@ class VideoPanel(QWidget):
     def target_role(self) -> ChannelRole:
         return ChannelRole(self.target_combo.currentData())
 
+    def set_target_role(self, role: ChannelRole) -> None:
+        """Select the channel controlled by the video panel."""
+        index = self.target_combo.findData(role.value)
+        if index >= 0:
+            self.target_combo.setCurrentIndex(index)
+
     def _build_ui(self, volume: int, muted: bool) -> None:
         layout = QVBoxLayout(self)
         self.root_layout = layout
@@ -186,9 +192,9 @@ class VideoPanel(QWidget):
         self.cue_both_button.setProperty("variant", "primary")
         self.cue_button.setEnabled(False)
         self.cue_both_button.setEnabled(False)
-        self.take_button = QPushButton("TAKE")
+        self.take_button = QPushButton("송출")
         self.take_button.setProperty("variant", "secondary")
-        self.take_both_button = QPushButton("TAKE BOTH")
+        self.take_both_button = QPushButton("동시 송출")
         self.take_both_button.setProperty("variant", "take")
         self.take_button.setProperty("heightRole", "standard")
         self.take_both_button.setProperty("heightRole", "standard")
@@ -197,8 +203,8 @@ class VideoPanel(QWidget):
         for button, description in (
             (self.cue_button, "선택 채널에 Preview Cue"),
             (self.cue_both_button, "송출과 현장에 Preview Cue"),
-            (self.take_button, "선택 채널 TAKE"),
-            (self.take_both_button, "송출과 현장 TAKE BOTH"),
+            (self.take_button, "선택 채널 송출"),
+            (self.take_both_button, "송출과 현장 동시 송출"),
         ):
             button.setToolTip(description)
             button.setAccessibleName(description)

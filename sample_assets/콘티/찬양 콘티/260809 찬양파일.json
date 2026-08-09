@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "document_type": "church_presenter_song_plan",
+  "entries": [
+    {
+      "entry_id": "56adee2d8201474981b0cecf8c4cdf82",
+      "song_source": "../songs/01_grace_morning.json",
+      "song_id": "grace_morning",
+      "sequence": [
+        "verse_1",
+        "chorus",
+        "verse_2",
+        "chorus",
+        "bridge",
+        "chorus"
+      ]
+    },
+    {
+      "entry_id": "7b16098021404cbb8684e5cda32aa29a",
+      "song_source": "../songs/04_together_praise.json",
+      "song_id": "together_praise",
+      "sequence": [
+        "verse_1",
+        "chorus",
+        "bridge",
+        "chorus"
+      ]
+    }
+  ]
+}

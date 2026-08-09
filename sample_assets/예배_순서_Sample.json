@@ -1,0 +1,152 @@
+{
+  "version": 4,
+  "document_type": "church_presenter_worship_order",
+  "presets": [
+    {
+      "name": "예배 시작",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 0,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 0,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "광고",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 2,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 2,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "찬양",
+      "broadcast": {
+        "kind": "subtitle_key",
+        "position": 0,
+        "source": "praise",
+        "reference": "song:56adee2d8201474981b0cecf8c4cdf82:0:0",
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/subtitles/260809 찬양파일.json"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 4,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "주기도문",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 5,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 5,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "예배를 위한 기도",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 5,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 5,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "어린이 찬양",
+      "broadcast": {
+        "kind": "video",
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/videos/sample_video.mp4"
+      },
+      "venue": {
+        "kind": "video",
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/videos/sample_video.mp4"
+      }
+    },
+    {
+      "name": "설교",
+      "broadcast": {
+        "kind": "subtitle_key",
+        "position": 2,
+        "source": "bible",
+        "reference": "OBA.1.1"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 6,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "봉헌",
+      "broadcast": {
+        "kind": "subtitle_key",
+        "position": 4,
+        "source": "praise",
+        "reference": "song:56adee2d8201474981b0cecf8c4cdf82:2:0",
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/subtitles/260809 찬양파일.json"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 7,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "성찬",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 6,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 6,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "축도",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 7,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 7,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    },
+    {
+      "name": "식탁으로 초대",
+      "broadcast": {
+        "kind": "pdf_page",
+        "position": 6,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      },
+      "venue": {
+        "kind": "pdf_page",
+        "position": 6,
+        "path": "/Users/jinsol.seo/codes/church_presenter/sample_assets/pdfs/sample_service.pdf"
+      }
+    }
+  ]
+}
