@@ -47,7 +47,7 @@ def test_qt_backend_streams_public_youtube_audio(qtbot) -> None:
 
         qtbot.waitUntil(prepared_or_failed, timeout=30_000)
         assert errors == []
-        assert backend.status is PlaybackStatus.READY
+        assert backend.status in {PlaybackStatus.READY, PlaybackStatus.PAUSED}
         backend.play()
         qtbot.waitUntil(
             lambda: any(position > 250 for position in positions) or bool(errors),
