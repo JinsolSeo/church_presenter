@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from church_presenter.domain.enums import ContentType, RepeatMode, SortField
-from church_presenter.domain.models import AppSettings, Content, PreviewPreset, SubtitleStyle
+from church_presenter.domain.models import (
+    AppSettings,
+    Content,
+    CueReference,
+    PreviewPreset,
+    SubtitleStyle,
+)
 from church_presenter.services.settings_service import SettingsService
 
 
@@ -127,8 +133,50 @@ def test_preview_presets_round_trip_in_worship_order(tmp_path: Path) -> None:
     assert warning == ""
     assert loaded == [preset.as_file_independent() for preset in presets]
     assert [preset.name for preset in loaded] == ["예배 시작", "말씀"]
-    assert loaded[1].broadcast_content.pdf_path is None
-    assert loaded[1].venue_content.video_path is None
+    assert loaded[1].broadcast_content.pdf_path == pdf_path
+    assert loaded[1].venue_content.video_path == video_path.resolve()
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_path", "expected_url"),
+    [
+        (Content.pdf(Path("/media/slides.pdf"), 4), Path("/media/slides.pdf"), ""),
+        (Content.video(Path("/media/clip.mp4")), Path("/media/clip.mp4"), ""),
+        (
+            Content.youtube_video("https://www.youtube.com/watch?v=abcdefghijk"),
+            None,
+            "https://www.youtube.com/watch?v=abcdefghijk",
+        ),
+    ],
+)
+def test_cue_reference_retains_media_source(
+    content: Content,
+    expected_path: Path | None,
+    expected_url: str,
+) -> None:
+    restored = CueReference.from_dict(CueReference.from_content(content).to_dict())
+
+    assert restored.path == expected_path
+    assert restored.url == expected_url
+    assert CueReference.from_content(restored.to_content()) == restored
+
+
+def test_cue_reference_retains_subtitle_plan_source() -> None:
+    plan_path = Path("/plans/praise.json")
+    content = Content.subtitle(
+        "Verse",
+        2,
+        SubtitleStyle(),
+        "#00FF00",
+        source="praise",
+        reference="song-1:verse-1",
+        source_path=plan_path,
+    )
+
+    restored = CueReference.from_dict(CueReference.from_content(content).to_dict())
+
+    assert restored.path == plan_path
+    assert restored.to_content().subtitle_path == plan_path
 
 
 def test_corrupt_preview_presets_are_backed_up(tmp_path: Path) -> None:
@@ -173,6 +221,26 @@ def test_worship_order_can_be_saved_and_loaded_as_a_file(tmp_path: Path) -> None
     assert "찬양합니다." not in payload
 
 
+def test_worship_order_v4_round_trip_retains_sources(tmp_path: Path) -> None:
+    service = SettingsService(tmp_path / "settings")
+    path = tmp_path / "service.json"
+    pdf_path = tmp_path / "broadcast.pdf"
+    youtube_url = "https://www.youtube.com/watch?v=abcdefghijk"
+    preset = PreviewPreset(
+        "Opening",
+        Content.pdf(pdf_path, 2),
+        Content.youtube_video(youtube_url),
+    )
+
+    service.save_preview_preset_file(path, [preset])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["version"] == 4
+    assert payload["presets"][0]["broadcast"]["path"] == str(pdf_path)
+    assert payload["presets"][0]["venue"]["url"] == youtube_url
+    assert service.load_preview_preset_file(path) == [preset.as_file_independent()]
+
+
 def test_legacy_worship_order_is_migrated_to_positions(tmp_path: Path) -> None:
     service = SettingsService(tmp_path / "settings")
     path = tmp_path / "legacy.json"
@@ -195,12 +263,16 @@ def test_legacy_worship_order_is_migrated_to_positions(tmp_path: Path) -> None:
         PreviewPreset(
             "말씀",
             Content(kind=ContentType.SUBTITLE_KEY, subtitle_card_index=4),
-            Content(kind=ContentType.PDF_PAGE, pdf_page=7),
+            Content(
+                kind=ContentType.PDF_PAGE,
+                pdf_path=Path("/old/computer/service.pdf"),
+                pdf_page=7,
+            ),
         )
     ]
 
 
-def test_worship_order_v3_preserves_semantic_subtitle_reference(tmp_path: Path) -> None:
+def test_worship_order_v4_preserves_semantic_subtitle_reference(tmp_path: Path) -> None:
     service = SettingsService(tmp_path / "settings")
     path = tmp_path / "order.json"
     preset = PreviewPreset(
@@ -220,7 +292,7 @@ def test_worship_order_v3_preserves_semantic_subtitle_reference(tmp_path: Path) 
     payload = json.loads(path.read_text(encoding="utf-8"))
     loaded = service.load_preview_preset_file(path)
 
-    assert payload["version"] == 3
+    assert payload["version"] == 4
     assert payload["presets"][0]["broadcast"]["source"] == "bible"
     assert payload["presets"][0]["broadcast"]["reference"] == "JHN.3.16"
     assert loaded[0].broadcast_content.subtitle_reference == "JHN.3.16"

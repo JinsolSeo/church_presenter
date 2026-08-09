@@ -99,6 +99,7 @@ class Content:
     background_color: str = "#000000"
     subtitle_source: str = ""
     subtitle_reference: str = ""
+    subtitle_path: Path | None = None
     subtitle_label: str = ""
     subtitle_label_style: SubtitleStyle = field(default_factory=default_bible_reference_style)
 
@@ -129,6 +130,7 @@ class Content:
         key_color: str,
         source: str = "",
         reference: str = "",
+        source_path: Path | None = None,
         label: str = "",
         label_style: SubtitleStyle | None = None,
     ) -> Content:
@@ -140,6 +142,7 @@ class Content:
             key_color=key_color,
             subtitle_source=source,
             subtitle_reference=reference,
+            subtitle_path=source_path,
             subtitle_label=label,
             subtitle_label_style=label_style or default_bible_reference_style(),
         )
@@ -184,6 +187,9 @@ class Content:
             "background_color": self.background_color,
             "subtitle_source": self.subtitle_source,
             "subtitle_reference": self.subtitle_reference,
+            "subtitle_path": (
+                str(self.subtitle_path) if self.subtitle_path is not None else None
+            ),
             "subtitle_label": self.subtitle_label,
             "subtitle_label_style": self.subtitle_label_style.to_dict(),
         }
@@ -201,6 +207,7 @@ class Content:
         pdf_path = data.get("pdf_path")
         video_path = data.get("video_path")
         video_url = data.get("video_url", "")
+        subtitle_path = data.get("subtitle_path")
         return cls(
             kind=kind,
             text=str(data.get("text", "")),
@@ -214,6 +221,11 @@ class Content:
             background_color=str(data.get("background_color", "#000000")),
             subtitle_source=str(data.get("subtitle_source", "")),
             subtitle_reference=str(data.get("subtitle_reference", "")),
+            subtitle_path=(
+                Path(subtitle_path)
+                if isinstance(subtitle_path, str) and subtitle_path
+                else None
+            ),
             subtitle_label=str(data.get("subtitle_label", "")),
             subtitle_label_style=(
                 SubtitleStyle.from_dict(label_style_data)
@@ -223,18 +235,23 @@ class Content:
         )
 
     def as_preset_reference(self) -> Content:
-        """Return a file-independent cue containing only type and position."""
+        """Return a compact cue reference while retaining source provenance."""
         if self.kind is ContentType.SUBTITLE_KEY:
             return Content(
                 kind=self.kind,
                 subtitle_card_index=self.subtitle_card_index,
                 subtitle_source=self.subtitle_source,
                 subtitle_reference=self.subtitle_reference,
+                subtitle_path=self.subtitle_path,
             )
         if self.kind is ContentType.PDF_PAGE:
-            return Content(kind=self.kind, pdf_page=self.pdf_page)
+            return Content(kind=self.kind, pdf_path=self.pdf_path, pdf_page=self.pdf_page)
         if self.kind is ContentType.VIDEO:
-            return Content(kind=self.kind)
+            return Content(
+                kind=self.kind,
+                video_path=self.video_path,
+                video_url=self.video_url,
+            )
         if self.kind is ContentType.SOLID_COLOR:
             return Content.solid_color(self.background_color)
         return Content.black()
@@ -268,6 +285,8 @@ class CueReference:
     position: int | None = None
     source: str = ""
     reference: str = ""
+    path: Path | None = None
+    url: str = ""
     color: str = "#000000"
 
     @classmethod
@@ -277,11 +296,20 @@ class CueReference:
             position = content.subtitle_card_index
         elif content.kind is ContentType.PDF_PAGE:
             position = content.pdf_page
+        path = None
+        if content.kind is ContentType.SUBTITLE_KEY:
+            path = content.subtitle_path
+        elif content.kind is ContentType.PDF_PAGE:
+            path = content.pdf_path
+        elif content.kind is ContentType.VIDEO:
+            path = content.video_path
         return cls(
             kind=content.kind,
             position=position,
             source=content.subtitle_source,
             reference=content.subtitle_reference,
+            path=path,
+            url=content.video_url,
             color=content.background_color,
         )
 
@@ -294,6 +322,10 @@ class CueReference:
                 data["source"] = self.source
             if self.reference:
                 data["reference"] = self.reference
+        if self.path is not None:
+            data["path"] = str(self.path)
+        if self.url:
+            data["url"] = self.url
         if self.kind is ContentType.SOLID_COLOR:
             data["color"] = self.color
         return data
@@ -302,11 +334,15 @@ class CueReference:
     def from_dict(cls, data: dict[str, Any]) -> CueReference:
         kind = ContentType(str(data["kind"]))
         position = _optional_int(data.get("position"))
+        path = data.get("path")
+        url = data.get("url", "")
         return cls(
             kind=kind,
             position=position,
             source=str(data.get("source", "")),
             reference=str(data.get("reference", "")),
+            path=Path(path) if isinstance(path, str) and path else None,
+            url=str(url) if isinstance(url, str) else "",
             color=str(data.get("color", "#000000")),
         )
 
@@ -317,11 +353,12 @@ class CueReference:
                 subtitle_card_index=self.position,
                 subtitle_source=self.source,
                 subtitle_reference=self.reference,
+                subtitle_path=self.path,
             )
         if self.kind is ContentType.PDF_PAGE:
-            return Content(kind=self.kind, pdf_page=self.position)
+            return Content(kind=self.kind, pdf_path=self.path, pdf_page=self.position)
         if self.kind is ContentType.VIDEO:
-            return Content(kind=self.kind)
+            return Content(kind=self.kind, video_path=self.path, video_url=self.url)
         if self.kind is ContentType.SOLID_COLOR:
             return Content.solid_color(self.color)
         return Content.black()
@@ -376,7 +413,7 @@ class PreviewPreset:
         )
 
     def as_file_independent(self) -> PreviewPreset:
-        """Drop source paths and rendered text from this preset."""
+        """Drop rendered content while retaining source-aware cue references."""
         return PreviewPreset(
             self.name,
             self.broadcast_content.as_preset_reference(),
@@ -384,7 +421,7 @@ class PreviewPreset:
         )
 
     def to_preset_dict(self) -> dict[str, Any]:
-        """Return the version-3 worship-order representation."""
+        """Return the source-aware worship-order representation."""
         return {
             "name": self.name,
             "broadcast": CueReference.from_content(self.broadcast_content).to_dict(),
@@ -393,7 +430,7 @@ class PreviewPreset:
 
     @classmethod
     def from_preset_dict(cls, data: dict[str, Any]) -> PreviewPreset:
-        """Restore a version-2/3 file-independent worship-order preset."""
+        """Restore a compact worship-order preset from versions 2 through 4."""
         broadcast = data.get("broadcast")
         venue = data.get("venue")
         if not isinstance(broadcast, dict) or not isinstance(venue, dict):

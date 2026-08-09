@@ -143,7 +143,7 @@ class SettingsService:
         if not isinstance(rows, list):
             raise TypeError("preview presets must be a list")
         version = data.get("version", 1)
-        if version in {2, 3}:
+        if version in {2, 3, 4}:
             presets = [PreviewPreset.from_preset_dict(row) for row in rows if isinstance(row, dict)]
         elif version == 1:
             presets = [
@@ -166,7 +166,7 @@ class SettingsService:
         if len(names) != len(set(names)):
             raise ValueError("Preview preset names must be unique")
         return {
-            "version": 3,
+            "version": 4,
             "document_type": "church_presenter_worship_order",
             "presets": [preset.as_file_independent().to_preset_dict() for preset in presets],
         }
