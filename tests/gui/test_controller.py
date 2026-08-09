@@ -378,6 +378,8 @@ def test_preview_preset_uses_saved_pdf_path_per_channel(qtbot, tmp_path: Path) -
     assert window.apply_preview_preset(preset.name)
     assert window.state.broadcast.preview_content == Content.pdf(broadcast_pdf, 1)
     assert window.state.venue.preview_content == Content.pdf(venue_pdf, 3)
+    assert window.pdf_panel.current_path == broadcast_pdf.resolve()
+    assert window.pdf_panel.preview_page == 1
 
 
 def test_missing_saved_pdf_path_falls_back_to_active_pdf(qtbot, tmp_path: Path) -> None:
@@ -409,6 +411,7 @@ def test_preview_preset_uses_saved_youtube_url_without_video_selection(
 
     assert window.apply_preview_preset(preset.name)
     assert window.state.broadcast.preview_content == Content.youtube_video(url)
+    assert window.video_panel.selected_source == url
 
 
 def test_preview_preset_uses_saved_local_video_without_video_selection(
@@ -423,6 +426,33 @@ def test_preview_preset_uses_saved_local_video_without_video_selection(
 
     assert window.apply_preview_preset(preset.name)
     assert window.state.broadcast.preview_content == Content.video(video_path)
+    assert window.video_panel.selected_source == video_path.resolve()
+
+
+def test_invalid_saved_video_url_does_not_partially_select_other_sources(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "valid.pdf"
+    create_pdf(pdf_path, page_count=1)
+    window = make_controller(qtbot, tmp_path)
+    before = (
+        window.state.broadcast.preview_content,
+        window.state.venue.preview_content,
+    )
+    preset = PreviewPreset(
+        "Invalid URL",
+        Content.pdf(pdf_path, 0),
+        Content(kind=ContentType.VIDEO, video_url="https://example.com/not-youtube"),
+    )
+    window.preview_presets = [preset]
+
+    assert not window.apply_preview_preset(preset.name)
+    assert window.pdf_panel.current_path is None
+    assert (
+        window.state.broadcast.preview_content,
+        window.state.venue.preview_content,
+    ) == before
 
 
 def test_preview_preset_loads_saved_praise_plan(qtbot, tmp_path: Path) -> None:

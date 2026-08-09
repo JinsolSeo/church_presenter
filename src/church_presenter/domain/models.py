@@ -142,14 +142,18 @@ class Content:
             key_color=key_color,
             subtitle_source=source,
             subtitle_reference=reference,
-            subtitle_path=source_path,
+            subtitle_path=(source_path.expanduser().resolve() if source_path is not None else None),
             subtitle_label=label,
             subtitle_label_style=label_style or default_bible_reference_style(),
         )
 
     @classmethod
     def pdf(cls, path: Path, page: int) -> Content:
-        return cls(ContentType.PDF_PAGE, pdf_path=path, pdf_page=page)
+        return cls(
+            ContentType.PDF_PAGE,
+            pdf_path=path.expanduser().resolve(),
+            pdf_page=page,
+        )
 
     @classmethod
     def video(cls, path: Path) -> Content:
@@ -292,6 +296,8 @@ class CueReference:
             path = content.pdf_path
         elif content.kind is ContentType.VIDEO:
             path = content.video_path
+        if path is not None:
+            path = path.expanduser().resolve()
         return cls(
             kind=content.kind,
             position=position,

@@ -48,6 +48,7 @@ from church_presenter.media.base import MediaPlaybackBackend
 from church_presenter.media.playlist import PlaylistService
 from church_presenter.media.qt_media_backend import QtMediaBackend
 from church_presenter.media.video_manager import VideoPlaybackManager
+from church_presenter.media.youtube_resolver import validate_youtube_url
 from church_presenter.remote.frame_capture import FrameCaptureService
 from church_presenter.remote.input_dispatcher import RemoteInputDispatcher
 from church_presenter.remote.network_service import RemoteNetworkService
@@ -1065,6 +1066,35 @@ class ControllerWindow(QMainWindow):
             self.status.setText(f"프리셋 적용 실패 · 기존 Preview 유지: {error}")
             return False
         assert contents is not None
+        primary_pdf = next(
+            (
+                contents[role]
+                for role in (ChannelRole.BROADCAST, ChannelRole.VENUE)
+                if contents[role].kind is ContentType.PDF_PAGE
+            ),
+            None,
+        )
+        if primary_pdf is not None:
+            assert primary_pdf.pdf_path is not None and primary_pdf.pdf_page is not None
+            if not self.pdf_panel.select_path(primary_pdf.pdf_path, primary_pdf.pdf_page):
+                self.status.setText("프리셋 적용 실패 · 기존 Preview 유지: PDF를 열 수 없습니다.")
+                return False
+        primary_video = next(
+            (
+                contents[role]
+                for role in (ChannelRole.BROADCAST, ChannelRole.VENUE)
+                if contents[role].kind is ContentType.VIDEO
+            ),
+            None,
+        )
+        if primary_video is not None:
+            video_source = primary_video.video_source
+            assert video_source is not None
+            if not self.video_panel.select_source(video_source):
+                self.status.setText(
+                    "프리셋 적용 실패 · 기존 Preview 유지: 영상을 선택할 수 없습니다."
+                )
+                return False
         subtitle_position = next(
             (
                 content.subtitle_card_index
@@ -1081,24 +1111,6 @@ class ControllerWindow(QMainWindow):
                 self.bible_panel.navigate(subtitle_position)
             else:
                 self.subtitle_panel.set_preview_position(subtitle_position)
-        pdf_position = next(
-            (
-                content.pdf_page
-                for content in contents.values()
-                if content.kind is ContentType.PDF_PAGE
-            ),
-            None,
-        )
-        if pdf_position is not None:
-            pdf_content = next(
-                content for content in contents.values() if content.kind is ContentType.PDF_PAGE
-            )
-            if (
-                pdf_content.pdf_path is not None
-                and self.pdf_panel.current_path is not None
-                and pdf_content.pdf_path.resolve() == self.pdf_panel.current_path.resolve()
-            ):
-                self.pdf_panel.set_preview_position(pdf_position)
         for role, content in contents.items():
             old_request = self._preview_preset_pdf_requests.pop(role, None)
             if old_request is not None:
@@ -1419,7 +1431,10 @@ class ControllerWindow(QMainWindow):
             if cue.kind is ContentType.VIDEO:
                 source: Path | str | None
                 if cue.video_url:
-                    source = cue.video_url
+                    try:
+                        source = validate_youtube_url(cue.video_url)
+                    except ValueError as error:
+                        return None, f"{label} YouTube 영상 URL을 확인할 수 없습니다: {error}"
                 else:
                     active_source = self.video_panel.selected_source
                     if cue.video_path is not None and cue.video_path.is_file():

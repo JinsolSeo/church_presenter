@@ -400,12 +400,29 @@ class PdfPanel(QWidget):
         self.items = items
         self.file_list.clear()
         for item in items:
-            modified = datetime.fromtimestamp(item.modified_time).strftime("%Y-%m-%d %H:%M")
-            prefix = "⚠ " if item.availability is not Availability.AVAILABLE else ""
-            row = QListWidgetItem(f"{prefix}{item.display_name}\n{modified}")
-            row.setToolTip(item.error_message or str(item.path))
-            self.file_list.addItem(row)
+            self._append_file_row(item)
         self.status.setText(error or f"PDF {len(items)}개")
+        if self.current_path is not None:
+            resolved = self.current_path.resolve()
+            selected_index = next(
+                (
+                    index
+                    for index, item in enumerate(self.items)
+                    if item.path.resolve() == resolved
+                ),
+                -1,
+            )
+            if selected_index < 0 and resolved.is_file():
+                self.items.append(item_from_path(resolved, MediaType.PDF))
+                self._append_file_row(self.items[-1])
+                selected_index = len(self.items) - 1
+            if selected_index >= 0:
+                item = self.items[selected_index]
+                self.file_list.blockSignals(True)
+                self.file_list.setCurrentRow(selected_index)
+                self.file_list.blockSignals(False)
+                self._load_file_item(item, self.preview_page, prepare_preview=False)
+                return
         if self._restore_path is not None:
             resolved = self._restore_path.resolve()
             for index, item in enumerate(items):
@@ -417,15 +434,69 @@ class PdfPanel(QWidget):
         if not 0 <= row < len(self.items):
             return
         item = self.items[row]
+        initial_page = (
+            self._restore_page
+            if self._restore_path is not None
+            and item.path.resolve() == self._restore_path.resolve()
+            else 0
+        )
+        self._restore_path = None
+        self._load_file_item(item, initial_page, prepare_preview=True)
+
+    def select_path(self, path: Path, page: int = 0) -> bool:
+        """Select a PDF for navigation without emitting a new Preview request."""
+        resolved = path.expanduser().resolve()
+        if not resolved.is_file():
+            return False
+        row = next(
+            (
+                index
+                for index, item in enumerate(self.items)
+                if item.path.resolve() == resolved
+            ),
+            -1,
+        )
+        if row < 0:
+            item = item_from_path(resolved, MediaType.PDF)
+            self.items.append(item)
+            if resolved not in self.extra_paths:
+                self.extra_paths.append(resolved)
+            self._append_file_row(item)
+            row = len(self.items) - 1
+        else:
+            item = self.items[row]
+        self.file_list.blockSignals(True)
+        self.file_list.setCurrentRow(row)
+        self.file_list.blockSignals(False)
+        loaded = self._load_file_item(item, page, prepare_preview=False)
+        if loaded and self.current_path is not None:
+            self.selection_changed.emit(str(self.current_path), self.preview_page)
+        return loaded
+
+    def _append_file_row(self, item: FileItem) -> None:
+        modified = datetime.fromtimestamp(item.modified_time).strftime("%Y-%m-%d %H:%M")
+        prefix = "⚠ " if item.availability is not Availability.AVAILABLE else ""
+        row = QListWidgetItem(f"{prefix}{item.display_name}\n{modified}")
+        row.setToolTip(item.error_message or str(item.path))
+        self.file_list.addItem(row)
+
+    def _load_file_item(
+        self,
+        item: FileItem,
+        initial_page: int,
+        *,
+        prepare_preview: bool,
+    ) -> bool:
         if item.availability is not Availability.AVAILABLE:
             self.status.setText(f"PDF 오류: {item.error_message}")
-            return
-        self.current_path = item.path
+            return False
         try:
-            self.page_count = pdf_page_count(item.path)
+            page_count = pdf_page_count(item.path)
         except Exception as error:
             self.status.setText(f"PDF 오류: {error}")
-            return
+            return False
+        self.current_path = item.path.resolve()
+        self.page_count = page_count
         self.page_spin.setRange(1, max(1, self.page_count))
         self.thumbnail_list.clear()
         self.coordinator.cancel(self._page_job_token)
@@ -444,15 +515,13 @@ class PdfPanel(QWidget):
             thumbnail.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.thumbnail_list.addItem(thumbnail)
         self.status.setText(f"{item.display_name} · {self.page_count} pages · 썸네일 준비 중…")
-        initial_page = (
-            self._restore_page
-            if self._restore_path is not None
-            and item.path.resolve() == self._restore_path.resolve()
-            else 0
-        )
-        self._restore_path = None
-        self.navigate(initial_page)
+        initial_page = max(0, min(initial_page, self.page_count - 1))
+        if prepare_preview:
+            self.navigate(initial_page)
+        else:
+            self.set_preview_position(initial_page)
         self._schedule_visible_thumbnails()
+        return True
 
     def _thumbnail_selected(self, page: int) -> None:
         item = self.thumbnail_list.item(page)

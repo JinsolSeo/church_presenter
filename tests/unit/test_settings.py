@@ -180,6 +180,17 @@ def test_cue_reference_retains_subtitle_plan_source() -> None:
     assert restored.to_content().subtitle_path == plan_path
 
 
+def test_cue_reference_normalizes_relative_source_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    relative = Path("weekly/service.pdf")
+    content = Content(kind=ContentType.PDF_PAGE, pdf_path=relative, pdf_page=1)
+
+    assert CueReference.from_content(content).path == (tmp_path / relative).resolve()
+
+
 def test_corrupt_preview_presets_are_backed_up(tmp_path: Path) -> None:
     service = SettingsService(tmp_path)
     tmp_path.mkdir(exist_ok=True)

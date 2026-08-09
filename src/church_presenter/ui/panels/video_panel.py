@@ -497,6 +497,7 @@ class VideoPanel(QWidget):
         self._update_take_buttons()
 
     def _scan_finished(self, items: list[FileItem], error: str) -> None:
+        previous_source = self.selected_source
         self.file_list.clear()
         if error:
             self.info_label.setText(f"영상 라이브러리 오류: {error}")
@@ -523,6 +524,9 @@ class VideoPanel(QWidget):
         )
         if url_error:
             self.info_label.setText(f"{VIDEO_URL_FILENAME} 오류: {url_error}")
+        if previous_source is not None and self.select_source(previous_source):
+            self.last_selected_path = None
+            return
         if self.last_selected_path is not None:
             restored = self._item_for_path(self.last_selected_path)
             self.last_selected_path = None
@@ -601,6 +605,44 @@ class VideoPanel(QWidget):
             if str(item.data(Qt.ItemDataRole.UserRole)) == source:
                 return item
         return None
+
+    def select_source(self, source: MediaSource) -> bool:
+        """Select a saved source for subsequent operator navigation without cueing it."""
+        if isinstance(source, str):
+            try:
+                selected_url = validate_youtube_url(source)
+            except ValueError:
+                return False
+            selected_source: MediaSource = selected_url
+            item = self._item_for_source(selected_url)
+            if item is None:
+                self._append_youtube_item(selected_url)
+                item = self._item_for_source(selected_url)
+        else:
+            selected_source = source.expanduser().resolve()
+            if not selected_source.is_file():
+                return False
+            item = self._item_for_path(selected_source)
+            if item is None:
+                item = QListWidgetItem(selected_source.name)
+                item.setData(Qt.ItemDataRole.UserRole, str(selected_source))
+                item.setData(Qt.ItemDataRole.UserRole + 2, "local")
+                item.setToolTip(str(selected_source))
+                self.file_list.addItem(item)
+        if item is None:
+            return False
+        self.file_list.blockSignals(True)
+        self.file_list.setCurrentItem(item)
+        self.file_list.blockSignals(False)
+        self.selected_source = selected_source
+        self.selected_path = selected_source if isinstance(selected_source, Path) else None
+        self.selection_changed.emit(str(selected_source))
+        self._update_cue_buttons()
+        self._set_status(
+            f"{self._display_name(str(selected_source))} 선택 · "
+            "채널을 확인하고 Preview Cue를 누르십시오."
+        )
+        return True
 
     def _update_take_buttons(self) -> None:
         self.take_button.setEnabled(self._preview_ready[self.target_role])
